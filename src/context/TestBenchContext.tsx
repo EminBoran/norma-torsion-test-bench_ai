@@ -645,7 +645,7 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
       
       try {
         if (socket) {
-           socket.emit('set_gpio', { pin: 'X7', state: true });
+           // socket.emit('set_gpio', { pin: 'X7', state: true });
         }
         await fetch('http://localhost:3000/api/motor/control', {
           method: 'POST',
@@ -666,7 +666,7 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
       
       try {
         if (socket) {
-           socket.emit('set_gpio', { pin: 'X7', state: false });
+           // socket.emit('set_gpio', { pin: 'X7', state: false });
         }
         await fetch('http://localhost:3000/api/motor/control', {
           method: 'POST',
