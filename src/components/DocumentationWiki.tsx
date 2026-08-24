@@ -43,8 +43,8 @@ Der Norma Torsion Test Bench darf ausschließlich von geschultem und autorisiert
 - Der Betrieb des Torsionsprüfstands bei überbrücktem Sicherheitskreis ist im Normalbetrieb strengstens untersagt.
 
 1.3. Zulässige Prüfparameter:
-- Maximales statisches Drehmoment: 100.0 Nm (Baumer CC50 Nennlast)
-- Maximale Drehzahl der Prüfachse: 600 RPM
+- Maximales statisches Drehmoment: 25.0 Nm (Baumer CC50 Nennlast bis 100 Nm, limitiert durch Motor PSE 3325)
+- Maximale Drehzahl der Prüfachse: 10 RPM (U/min)
 - Prüfraumtemperatur: 18.0 °C bis 26.0 °C (gemäß DIN EN ISO 7500-1)
 - Relative Luftfeuchtigkeit: 30 % bis 65 % r.F. (nicht kondensierend)
 

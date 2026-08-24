@@ -472,10 +472,10 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
 
   // Sequence Configuration (RPi 5 & Waveshare 10.1" Sequencer)
   const [sequenceConfig, setSequenceConfig] = useState<SequenceConfig>({
-    step1_speedRpm: 60,
-    step1_targetNm: 15.0,
+    step1_speedRpm: 2.0,
+    step1_targetNm: 2.0,
     step2_dwellSeconds: 1.5,
-    step3_speedRpm: 120,
+    step3_speedRpm: 5.0,
     step3_breakDropPercent: 30,
     step3_maxAngle: 220.0,
     step5_dwellSeconds: 5.0,
@@ -635,27 +635,53 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
     addLog(`Prüfbericht-Vorlage [${id}] aktualisiert.`, 'info', 'VORLAGE');
   }, [addLog]);
 
-  const toggleX3 = useCallback(() => {
+  
+  const toggleX3 = useCallback(async () => {
     if (x3Status === 'idle' || x3Status === 'stopping') {
       setX3Status('starting');
-      addLog('X3 Main Start initiiert (Farbe: Gelb #d97706 - Anlaufphase)...', 'x3', 'X3-START');
+      addLog('Starte Antrieb (Sende Freigabe an OPC UA und GPIO)...', 'x3', 'X3-START');
+      
+      try {
+        if (socket) {
+           socket.emit('set_gpio', { pin: 'X7', state: true });
+        }
+        await fetch('http://localhost:3000/api/motor/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: 'enable', speed: 10, targetNm: 25 })
+        });
+      } catch (e) { console.error(e); }
+
       setTimeout(() => {
         setX3Status('running');
         setX5Status('armed');
-        setMotorSpeedRpm(activeProgram === 'service' ? 120 : 250);
-        addLog(`X3 Main Start AKTIV (Farbe: Grün #16a34a) - Programm [${activeProgram.toUpperCase()}] gestartet.`, 'x3', 'X3-RUNNING');
+        setMotorSpeedRpm(10);
+        addLog('Antrieb BEREIT und Freigabe erteilt.', 'x3', 'X3-RUNNING');
       }, 600);
     } else {
       setX3Status('stopping');
-      addLog('X3 Stopp-Signal empfangen (Farbe: Rot #dc2626)...', 'x3', 'X3-STOP');
+      addLog('Stoppe Antrieb (Entziehe Freigabe)...', 'x3', 'X3-STOP');
+      
+      try {
+        if (socket) {
+           socket.emit('set_gpio', { pin: 'X7', state: false });
+        }
+        await fetch('http://localhost:3000/api/motor/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: 'disable', speed: 0, targetNm: 0 })
+        });
+      } catch (e) { console.error(e); }
+
       setTimeout(() => {
         setX3Status('idle');
         setX5Status('idle');
         setMotorSpeedRpm(0);
-        addLog('X3 Main Start DEAKTIVIERT (Farbe: Grau #64748b - Standby).', 'info', 'SYSTEM');
+        addLog('Antrieb DEAKTIVIERT (Standby).', 'info', 'SYSTEM');
       }, 500);
     }
-  }, [x3Status, activeProgram, addLog]);
+  }, [x3Status, activeProgram, addLog, socket]);
+
 
   const triggerX5 = useCallback(() => {
     if (x3Status !== 'running') {
