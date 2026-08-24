@@ -7,7 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
-    "start": "node dist/server.cjs"
+    "start": "node --security-revert=CVE-2023-46809 dist/server.cjs"
   },
   "keywords": [],
   "author": "",
@@ -19,10 +19,13 @@
     "express": "^5.2.1",
     "lucide-react": "^1.33.0",
     "node-opcua": "^2.178.0",
+    "onoff": "^6.0.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
     "recharts": "^3.10.1",
+    "socket.io": "^4.8.3",
+    "socket.io-client": "^4.8.3",
     "sqlite": "^5.1.1",
     "sqlite3": "^6.0.1",
     "tailwind-merge": "^3.6.0"

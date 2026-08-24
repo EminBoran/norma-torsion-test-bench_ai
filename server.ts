@@ -1,16 +1,15 @@
 import fs from "fs";
-
+import http from "http";
 
 import express from "express";
 import path from "path";
 import cors from "cors";
-import { OPCUAClient, AttributeIds, ClientSubscription, ClientMonitoredItem, TimestampsToReturn, DataType, Variant } from "node-opcua";
+import { OPCUAClient, AttributeIds, ClientSubscription, ClientMonitoredItem, TimestampsToReturn } from "node-opcua";
 import { createServer as createViteServer } from "vite";
+import { Server } from "socket.io";
 import * as dotenv from "dotenv";
 
 dotenv.config();
-
-
 
 import { createRequire } from "module";
 // using standard require inside server bundle or falling back gracefully
@@ -19,6 +18,7 @@ const _require = typeof require !== 'undefined' ? require : createRequire('file:
 let db: any = null;
 let isMockDb = false;
 let mockData: any = { system_variables: [], test_records: [] };
+
 
 async function setupDatabase() {
   try {
@@ -283,9 +283,79 @@ app.post("/api/motor/control", async (req, res) => {
 });
 
 async function startServer() {
-  // Start OPC UA in the background so it doesn't block the server startup
   await setupDatabase();
   setupOpcUa().catch(console.error);
+
+  const server = http.createServer(app);
+  const io = new Server(server, { cors: { origin: "*" } });
+
+  // Initialize Hardware GPIOs on Raspberry Pi
+  let Gpio: any;
+  try {
+    Gpio = _require('onoff').Gpio;
+    console.log("Hardware GPIOs (onoff) successfully loaded.");
+  } catch (err) {
+    console.warn("onoff module not available. Running without hardware GPIOs (mock mode).");
+  }
+
+  let x5Button: any = null;
+  let x6Sensor: any = null;
+  let x7Relay: any = null;
+  let statusLed: any = null;
+
+  if (Gpio) {
+    try {
+      x5Button = new Gpio(17, 'in', 'both'); // Pin 11
+      x6Sensor = new Gpio(27, 'in', 'both'); // Pin 13
+      x7Relay = new Gpio(22, 'out');         // Pin 15
+      statusLed = new Gpio(23, 'out');       // Pin 16
+      
+      // Default states
+      x7Relay.writeSync(0);
+      statusLed.writeSync(1); // Ready / System ON
+      
+      console.log("GPIO Pins initialized successfully.");
+    } catch (err) {
+      console.error("Failed to initialize GPIO pins (require root/sudo).", err);
+    }
+  }
+
+  // Handle incoming commands from UI
+  io.on('connection', (socket) => {
+    console.log("UI Client connected via WebSockets");
+    
+    socket.on('set_gpio', (data) => {
+      const { pin, state } = data; // { pin: 'X7', state: true }
+      if (Gpio) {
+        try {
+          if (pin === 'X7' && x7Relay) x7Relay.writeSync(state ? 1 : 0);
+          if (pin === 'LED' && statusLed) statusLed.writeSync(state ? 1 : 0);
+        } catch (e) {
+           console.error(`Error setting GPIO ${pin}`, e);
+        }
+      }
+    });
+  });
+
+  // Realtime Broadcast Loop (10Hz)
+  setInterval(() => {
+    let gpioState = { x5: false, x6: false, x7: false, led: false };
+    if (Gpio && x5Button) {
+      try {
+        gpioState.x5 = x5Button.readSync() === 1;
+        gpioState.x6 = x6Sensor.readSync() === 1;
+        gpioState.x7 = x7Relay.readSync() === 1;
+        gpioState.led = statusLed.readSync() === 1;
+      } catch(e) {}
+    }
+
+    io.emit('live_status', {
+      connected: isConnected,
+      liveTorque: currentTorque,
+      motorPosition: currentPosition,
+      gpio: gpioState
+    });
+  }, 100);
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -301,7 +371,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

@@ -22,10 +22,7 @@ import {
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { TestBenchProvider, useTestBench } from './context/TestBenchContext';
-import TorqueCalibration from './components/TorqueCalibration';
-import EnvironmentHistory from './components/EnvironmentHistory';
 import DeviceSettings from './components/DeviceSettings';
-import MotorControl from './components/MotorControl';
 import TestDatabase from './components/TestDatabase';
 import ReportGenerator from './components/ReportGenerator';
 import DocumentationWiki from './components/DocumentationWiki';
@@ -67,6 +64,7 @@ function NavItem({ active, onClick, icon, label, badge, badgeColor }: { active: 
 
 function DashboardLayout() {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
+  const [settingsSubTab, setSettingsSubTab] = useState<'ablauf' | 'motor' | 'torque' | 'klima' | 'ports' | 'service' | 'diagnose' | 'rpi'>('ablauf');
   const [isNavOpen, setIsNavOpen] = useState(true);
   const { 
     x3Status, 
@@ -264,17 +262,19 @@ function DashboardLayout() {
 
         {/* Clean Light Main Content */}
         <main className="flex-1 p-6 overflow-y-auto bg-slate-50">
-          {activeTab === 'dashboard' && <TouchscreenAblauf />}
+          {activeTab === 'dashboard' && (
+            <TouchscreenAblauf 
+              onNavigateToSettings={(subTab) => {
+                if (subTab) setSettingsSubTab(subTab);
+                setActiveTab('einstellungen');
+              }} 
+            />
+          )}
           {activeTab === 'datenbank' && <TestDatabase onSelectForReport={handleSelectForReport} />}
           {activeTab === 'report' && <ReportGenerator />}
           {activeTab === 'doku' && <DocumentationWiki />}
           {activeTab === 'einstellungen' && (
-            <div className="space-y-6">
-              <MotorControl />
-              <TorqueCalibration />
-              <EnvironmentHistory />
-              <DeviceSettings />
-            </div>
+            <DeviceSettings initialSubTab={settingsSubTab} />
           )}
         </main>
       </div>

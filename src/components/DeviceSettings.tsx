@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTestBench } from '../context/TestBenchContext';
 import { 
   Zap, 
@@ -17,186 +17,497 @@ import {
   FileCode,
   Terminal,
   Cloud,
-  Database
+  Database,
+  Thermometer,
+  Compass,
+  Save,
+  Check,
+  RotateCcw
 } from 'lucide-react';
 import ServiceMenu from './ServiceMenu';
 import Diagnostics from './Diagnostics';
+import MotorControl from './MotorControl';
+import TorqueCalibration from './TorqueCalibration';
+import EnvironmentHistory from './EnvironmentHistory';
 
-export default function DeviceSettings() {
-  const { ports, togglePortState, x3Status, x5Status } = useTestBench();
-  const [activeSubTab, setActiveSubTab] = useState<'service' | 'diagnose' | 'ports' | 'opcua' | 'pse' | 'rpi' | 'ai'>('service');
+export type SettingsSubTab = 'ablauf' | 'motor' | 'torque' | 'klima' | 'ports' | 'service' | 'diagnose' | 'rpi' | 'opcua';
+
+interface DeviceSettingsProps {
+  initialSubTab?: SettingsSubTab;
+}
+
+export default function DeviceSettings({ initialSubTab = 'ablauf' }: DeviceSettingsProps) {
+  const { 
+    ports, 
+    togglePortState, 
+    x3Status, 
+    x5Status,
+    sequenceConfig,
+    updateSequenceConfig
+  } = useTestBench();
+  
+  const [activeSubTab, setActiveSubTab] = useState<SettingsSubTab>(initialSubTab);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [editCfg, setEditCfg] = useState(sequenceConfig);
+
+  useEffect(() => {
+    if (initialSubTab) {
+      setActiveSubTab(initialSubTab);
+    }
+  }, [initialSubTab]);
+
+  useEffect(() => {
+    setEditCfg(sequenceConfig);
+  }, [sequenceConfig]);
 
   const totalPower = ports.reduce((acc, p) => acc + (p.status === 'active' ? p.power : 0), 0);
   const activeCount = ports.filter(p => p.status === 'active').length;
 
-  const handleSave = () => {
+  const handleSaveConfig = () => {
+    updateSequenceConfig(editCfg);
     setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 3000);
+    setTimeout(() => setSaveSuccess(false), 2500);
+  };
+
+  const handleApplyPreset = (type: 'standard' | 'fast' | 'heavy' | 'gentle') => {
+    let preset: Partial<typeof sequenceConfig> = {};
+    if (type === 'standard') {
+      preset = {
+        step1_speedRpm: 2.0,
+        step1_targetNm: 2.0,
+        step2_dwellSeconds: 2.0,
+        step3_speedRpm: 5.0,
+        step3_breakDropPercent: 30,
+        step3_maxAngle: 360,
+        step5_dwellSeconds: 2.0,
+        step6_homeSpeedRpm: 10.0,
+        step6_requireDIX6: true,
+        partNumber: 'NT-50-A2',
+        serialNumber: 'SN-' + Math.floor(1000 + Math.random() * 9000)
+      };
+    } else if (type === 'fast') {
+      preset = {
+        step1_speedRpm: 4.0,
+        step1_targetNm: 2.0,
+        step2_dwellSeconds: 1.0,
+        step3_speedRpm: 10.0,
+        step3_breakDropPercent: 25,
+        step3_maxAngle: 360,
+        step5_dwellSeconds: 1.0,
+        step6_homeSpeedRpm: 15.0,
+        step6_requireDIX6: false,
+        partNumber: 'NT-50-FAST',
+        serialNumber: 'SN-F' + Math.floor(1000 + Math.random() * 9000)
+      };
+    } else if (type === 'heavy') {
+      preset = {
+        step1_speedRpm: 1.5,
+        step1_targetNm: 5.0,
+        step2_dwellSeconds: 3.0,
+        step3_speedRpm: 3.0,
+        step3_breakDropPercent: 35,
+        step3_maxAngle: 450,
+        step5_dwellSeconds: 3.0,
+        step6_homeSpeedRpm: 8.0,
+        step6_requireDIX6: true,
+        partNumber: 'NT-75-HD',
+        serialNumber: 'SN-H' + Math.floor(1000 + Math.random() * 9000)
+      };
+    } else if (type === 'gentle') {
+      preset = {
+        step1_speedRpm: 1.0,
+        step1_targetNm: 1.0,
+        step2_dwellSeconds: 2.5,
+        step3_speedRpm: 2.0,
+        step3_breakDropPercent: 20,
+        step3_maxAngle: 270,
+        step5_dwellSeconds: 2.5,
+        step6_homeSpeedRpm: 5.0,
+        step6_requireDIX6: true,
+        partNumber: 'NT-30-FINE',
+        serialNumber: 'SN-G' + Math.floor(1000 + Math.random() * 9000)
+      };
+    }
+    const updated = { ...editCfg, ...preset };
+    setEditCfg(updated);
+    updateSequenceConfig(updated);
+    setSaveSuccess(true);
+    setTimeout(() => setSaveSuccess(false), 2500);
   };
 
   return (
-    <div className="space-y-6 max-w-6xl">
-      {/* Header with Sub-tabs for Einstellungen (Service & Diagnose integriert) */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
-        <div>
-          <h3 className="text-xl font-bold text-slate-900 tracking-tight flex items-center">
-            System-Einstellungen & Wartung
-            <Settings className="w-5 h-5 ml-2 text-indigo-600" />
-          </h3>
-          <p className="text-xs text-slate-500">
-            Zentraler Bereich für Service-Menü, Diagnoseprotokoll, Hardware-Ports (X0-X7) und Bus-Konfiguration
-          </p>
+    <div className="space-y-6 max-w-6xl mx-auto">
+      {/* Header with Categorized Sub-tabs */}
+      <div className="bg-white border border-slate-300 rounded-sm p-4 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
+          <div>
+            <h3 className="text-base font-bold text-slate-900 tracking-tight flex items-center">
+              Erweiterte Systemeinstellungen & Konfiguration
+              <Settings className="w-4 h-4 ml-2 text-indigo-600" />
+            </h3>
+            <p className="text-xs text-slate-500">
+              Alle Detailparameter, Achskonfigurationen, Kalibrierwerte und Hardware-Schnittstellen an einem zentralen Ort
+            </p>
+          </div>
+          {saveSuccess && (
+            <div className="flex items-center space-x-1.5 px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold rounded-sm animate-fade-in">
+              <Check className="w-3.5 h-3.5" />
+              <span>Einstellungen gespeichert!</span>
+            </div>
+          )}
         </div>
 
-        {/* Sub Navigation */}
-        <div className="flex items-center space-x-1 bg-slate-200/70 p-1 rounded-sm overflow-x-auto">
+        {/* Sub Navigation Tabs */}
+        <div className="flex items-center space-x-1 bg-slate-100 p-1 rounded-sm overflow-x-auto">
           <button
-            onClick={() => setActiveSubTab('service')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
-              activeSubTab === 'service'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+            onClick={() => setActiveSubTab('ablauf')}
+            className={`px-3 py-2 rounded-sm text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
+              activeSubTab === 'ablauf'
+                ? 'bg-white text-slate-900 border border-slate-300 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
             }`}
           >
-            <Wrench className="w-3.5 h-3.5" />
+            <Sliders className="w-3.5 h-3.5 text-blue-600" />
+            <span>Ablauf- & Sequenz-Parameter</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('motor')}
+            className={`px-3 py-2 rounded-sm text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
+              activeSubTab === 'motor'
+                ? 'bg-white text-slate-900 border border-slate-300 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <RotateCw className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Motor & Achse (PSE)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('torque')}
+            className={`px-3 py-2 rounded-sm text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
+              activeSubTab === 'torque'
+                ? 'bg-white text-slate-900 border border-slate-300 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <Activity className="w-3.5 h-3.5 text-cyan-600" />
+            <span>Drehmoment & CC50 Sensor</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('klima')}
+            className={`px-3 py-2 rounded-sm text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
+              activeSubTab === 'klima'
+                ? 'bg-white text-slate-900 border border-slate-300 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <Thermometer className="w-3.5 h-3.5 text-amber-600" />
+            <span>Klima & Umgebungsverlauf</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('ports')}
+            className={`px-3 py-2 rounded-sm text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
+              activeSubTab === 'ports'
+                ? 'bg-white text-slate-900 border border-slate-300 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <Zap className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Hardware Ports (X0-X7)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab('service')}
+            className={`px-3 py-2 rounded-sm text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
+              activeSubTab === 'service'
+                ? 'bg-white text-slate-900 border border-slate-300 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+            }`}
+          >
+            <Wrench className="w-3.5 h-3.5 text-slate-700" />
             <span>Service & SQL-Variablen</span>
           </button>
 
           <button
             onClick={() => setActiveSubTab('diagnose')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
+            className={`px-3 py-2 rounded-sm text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
               activeSubTab === 'diagnose'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+                ? 'bg-white text-slate-900 border border-slate-300 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
             }`}
           >
-            <Terminal className="w-3.5 h-3.5" />
+            <Terminal className="w-3.5 h-3.5 text-slate-700" />
             <span>Diagnose & Logs</span>
           </button>
 
           <button
-            onClick={() => setActiveSubTab('ports')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
-              activeSubTab === 'ports'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Zap className="w-3.5 h-3.5" />
-            <span>Hardware Ports (X0 - X7)</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab('opcua')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
-              activeSubTab === 'opcua'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Radio className="w-3.5 h-3.5" />
-            <span>Baumer & OPC UA</span>
-          </button>
-
-          <button
-            onClick={() => setActiveSubTab('pse')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
-              activeSubTab === 'pse'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            <Cpu className="w-3.5 h-3.5" />
-            <span>PSE-Parameter</span>
-          </button>
-
-          <button
             onClick={() => setActiveSubTab('rpi')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
+            className={`px-3 py-2 rounded-sm text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
               activeSubTab === 'rpi'
-                ? 'bg-white text-slate-900 shadow-xs'
-                : 'text-slate-600 hover:text-slate-900'
+                ? 'bg-white text-slate-900 border border-slate-300 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
             }`}
           >
-            <Terminal className="w-3.5 h-3.5" />
-            <span>Raspberry Pi & GPIO</span>
-          </button>
-          
-          <button
-            onClick={() => setActiveSubTab('ai')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer flex items-center space-x-1.5 ${
-              activeSubTab === 'ai'
-                ? 'bg-blue-50 text-blue-700 shadow-xs border border-blue-200'
-                : 'text-slate-600 hover:text-blue-600'
-            }`}
-          >
-            <Cloud className="w-3.5 h-3.5" />
-            <span>Google AI Studio</span>
+            <Cpu className="w-3.5 h-3.5 text-slate-700" />
+            <span>RPi 5 & Kiosk</span>
           </button>
         </div>
       </div>
 
-      {/* SubTab 1: Service Menu with Variables, IO-Link, Motor parameters & Actuators */}
-      {activeSubTab === 'service' && (
-        <ServiceMenu />
-      )}
-
-      {/* SubTab 2: Diagnostics with live logs */}
-      {activeSubTab === 'diagnose' && (
-        <Diagnostics />
-      )}
-
-      {/* SubTab: Raspberry Pi GPIO info */}
-      {activeSubTab === 'rpi' && (
-        <div className="bg-white rounded-sm p-6 max-w-3xl w-full border border-slate-300 shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-            <div className="flex items-center space-x-2">
-              <Terminal className="w-5 h-5 text-slate-700" />
-              <h3 className="font-bold text-slate-900 text-base">Raspberry Pi 5 Setup</h3>
+      {/* SubTab 1: Ablauf- & Sequenz-Parameter */}
+      {activeSubTab === 'ablauf' && (
+        <div className="space-y-6">
+          {/* Presets Bar */}
+          <div className="bg-white border border-slate-300 p-4 rounded-sm">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-800 block">
+                  Prüfprogramm-Vorlagen (Presets)
+                </span>
+                <span className="text-xs text-slate-500">
+                  Schnellkonfiguration für Standard- und Sonderprüfungen laden
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={() => handleApplyPreset('standard')}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-sm text-xs font-bold cursor-pointer"
+                >
+                  Standard Torsion (2.0 Nm / 5 RPM)
+                </button>
+                <button
+                  onClick={() => handleApplyPreset('fast')}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-sm text-xs font-bold cursor-pointer"
+                >
+                  Schnelltest (10 RPM)
+                </button>
+                <button
+                  onClick={() => handleApplyPreset('heavy')}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-sm text-xs font-bold cursor-pointer"
+                >
+                  Heavy Duty (5.0 Nm Vorlast)
+                </button>
+                <button
+                  onClick={() => handleApplyPreset('gentle')}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 rounded-sm text-xs font-bold cursor-pointer"
+                >
+                  Feinprüfung (1.0 Nm / 2 RPM)
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="space-y-4 text-sm text-slate-600">
-            <p className="font-medium text-slate-800">
-              Diese Benutzeroberfläche ist nativ für die Auflösung <strong>1280x800 (16:10 IPS)</strong> des Waveshare Touchscreens am Raspberry Pi 5 optimiert.
-            </p>
-
-            <div className="bg-slate-900 p-4 rounded-sm font-mono text-[11px] sm:text-xs space-y-2 overflow-x-auto text-slate-300">
-              <p className="text-slate-500"># 1. Kiosk-Modus Autostart in /etc/xdg/labwc/autostart oder ~/.config/wayfire.ini:</p>
-              <p className="text-emerald-400">chromium-browser --kiosk --app=http://localhost:3000 --noerrdialogs --disable-infobars</p>
-              <p className="text-slate-500 pt-2"># 2. Waveshare 10.1" Display & Touch Overlay in /boot/firmware/config.txt:</p>
-              <p>dtoverlay=vc4-kms-v3d</p>
-              <p>max_framebuffers=2</p>
-              <p>hdmi_group=2</p>
-              <p>hdmi_mode=87</p>
-              <p>hdmi_cvt 1280 800 60 6 0 0 0</p>
+          {/* Form Settings Grid */}
+          <div className="bg-white border border-slate-300 p-6 rounded-sm space-y-6">
+            <div className="border-b border-slate-200 pb-3 flex items-center justify-between">
+              <div>
+                <h4 className="font-bold text-slate-900 text-sm">Sequenzer Schritt-Parameter (Schritte 0 - 6)</h4>
+                <p className="text-xs text-slate-500">Präzise Vorgaben für Drehzahlen, Vorlast, Haltezeiten und Abbruchkriterien</p>
+              </div>
+              <button
+                onClick={handleSaveConfig}
+                className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-sm text-xs font-bold flex items-center space-x-1.5 cursor-pointer shadow-xs"
+              >
+                <Save className="w-4 h-4" />
+                <span>Parameter Speichern</span>
+              </button>
             </div>
 
-            <div className="border border-slate-300 rounded-sm p-4 bg-slate-50 space-y-3 mt-4">
-              <h4 className="font-bold text-slate-900 text-sm border-b border-slate-200 pb-2">GPIO Pinbelegung (Norma Ablauf):</h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-mono text-slate-700">
-                <div><strong>GPIO 17 (Pin 11):</strong> Eingang X5 Start-Taster</div>
-                <div><strong>GPIO 27 (Pin 13):</strong> Eingang DI X6 Referenz-Sensor</div>
-                <div><strong>GPIO 22 (Pin 15):</strong> Ausgang X7 Lüfter-Relais (24V)</div>
-                <div><strong>GPIO 23 (Pin 16):</strong> Ausgang LED Status (Grün)</div>
-                <div><strong>GPIO 24 (Pin 18):</strong> Ausgang Antrieb Enable (24V)</div>
-                <div><strong>GPIO 25 (Pin 22):</strong> Eingang Antrieb Ready</div>
-                
-                <div className="pt-2 border-t border-slate-200 mt-1 col-span-1 sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div><strong>Ethernet / USB:</strong> Baumer CC50 (192.168.1.10:4840)</div>
-                  <div><strong>RS485 / CAN:</strong> PSE Motor-Antriebssteuerung</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Step 1: Voranzug */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-sm space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                  <span className="text-xs font-bold text-slate-800">Schritt 1: X5 Voranzug</span>
+                  <span className="text-[10px] font-mono text-blue-700 bg-blue-50 px-1.5 py-0.5 border border-blue-200">Hold</span>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700 block">Voranzug-Drehzahl v1 (RPM)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={editCfg.step1_speedRpm}
+                    onChange={(e) => setEditCfg({ ...editCfg, step1_speedRpm: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-sm font-mono text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700 block">Vorlast-Ziel M1 (Nm)</label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={editCfg.step1_targetNm}
+                    onChange={(e) => setEditCfg({ ...editCfg, step1_targetNm: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-sm font-mono text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                  />
                 </div>
               </div>
+
+              {/* Step 2: Beruhigungszeit */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-sm space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                  <span className="text-xs font-bold text-slate-800">Schritt 2: Beruhigungszeit</span>
+                  <span className="text-[10px] font-mono text-slate-700 bg-slate-200 px-1.5 py-0.5">Dwell 1</span>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700 block">Wartezeit t1 (Sekunden)</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={editCfg.step2_dwellSeconds}
+                    onChange={(e) => setEditCfg({ ...editCfg, step2_dwellSeconds: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-sm font-mono text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 pt-2">
+                  Ermöglicht mechanische Relaxation des Prüflings vor dem eigentlichen Hauptlast-Anstieg.
+                </p>
+              </div>
+
+              {/* Step 3: Prüfdrehzahl & Bruch */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-sm space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                  <span className="text-xs font-bold text-slate-800">Schritt 3: Torsion bis Bruch</span>
+                  <span className="text-[10px] font-mono text-red-700 bg-red-50 px-1.5 py-0.5 border border-red-200">Main Test</span>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700 block">Prüfgeschwindigkeit v2 (RPM)</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={editCfg.step3_speedRpm}
+                    onChange={(e) => setEditCfg({ ...editCfg, step3_speedRpm: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-sm font-mono text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700 block">Bruchabfall-Schwelle (%)</label>
+                  <input
+                    type="number"
+                    value={editCfg.step3_breakDropPercent}
+                    onChange={(e) => setEditCfg({ ...editCfg, step3_breakDropPercent: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-sm font-mono text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* Step 5: Entlastungszeit */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-sm space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                  <span className="text-xs font-bold text-slate-800">Schritt 5: Entlastungszeit</span>
+                  <span className="text-[10px] font-mono text-slate-700 bg-slate-200 px-1.5 py-0.5">Dwell 2</span>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700 block">Wartezeit t2 (Sekunden)</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={editCfg.step5_dwellSeconds}
+                    onChange={(e) => setEditCfg({ ...editCfg, step5_dwellSeconds: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-sm font-mono text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 pt-2">
+                  Dauer vor dem automatischen Rücklauf zur Vermeidung von Rückschlagkräften.
+                </p>
+              </div>
+
+              {/* Step 6: Home Speed & DI X6 */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-sm space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                  <span className="text-xs font-bold text-slate-800">Schritt 6: Referenzfahrt (Home)</span>
+                  <span className="text-[10px] font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 border border-emerald-200">0.0°</span>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700 block">Rücklauf-Drehzahl v_home (RPM)</label>
+                  <input
+                    type="number"
+                    step="0.5"
+                    value={editCfg.step6_homeSpeedRpm}
+                    onChange={(e) => setEditCfg({ ...editCfg, step6_homeSpeedRpm: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-sm font-mono text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="pt-2 flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="dix6Check"
+                    checked={editCfg.step6_requireDIX6}
+                    onChange={(e) => setEditCfg({ ...editCfg, step6_requireDIX6: e.target.checked })}
+                    className="w-4 h-4 text-blue-600 rounded cursor-pointer"
+                  />
+                  <label htmlFor="dix6Check" className="text-xs font-bold text-slate-700 cursor-pointer">
+                    Erfordert Hardware-Signal DI X6
+                  </label>
+                </div>
+              </div>
+
+              {/* Prüflings-Stammdaten */}
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-sm space-y-3">
+                <div className="flex items-center justify-between border-b border-slate-200 pb-1.5">
+                  <span className="text-xs font-bold text-slate-800">Prüflings-Stammdaten</span>
+                  <span className="text-[10px] font-mono text-slate-700 bg-slate-200 px-1.5 py-0.5">Part / Charge</span>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700 block">Sachnummer (Part Number)</label>
+                  <input
+                    type="text"
+                    value={editCfg.partNumber}
+                    onChange={(e) => setEditCfg({ ...editCfg, partNumber: e.target.value })}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-sm font-mono text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-slate-700 block">Seriennummer (Prüflauf)</label>
+                  <input
+                    type="text"
+                    value={editCfg.serialNumber}
+                    onChange={(e) => setEditCfg({ ...editCfg, serialNumber: e.target.value })}
+                    className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-sm font-mono text-xs text-slate-900 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-slate-200">
+              <button
+                onClick={handleSaveConfig}
+                className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-sm text-xs font-bold flex items-center space-x-2 cursor-pointer shadow-sm"
+              >
+                <Save className="w-4 h-4" />
+                <span>Konfiguration in Steuerung übernehmen</span>
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* SubTab 3: Hardware Ports X0 to X7 Overview */}
+      {/* SubTab 2: Motor & Achse PSE */}
+      {activeSubTab === 'motor' && (
+        <div className="space-y-6">
+          <MotorControl />
+        </div>
+      )}
+
+      {/* SubTab 3: Drehmoment & Sensorik (CC50) */}
+      {activeSubTab === 'torque' && (
+        <div className="space-y-6">
+          <TorqueCalibration />
+        </div>
+      )}
+
+      {/* SubTab 4: Klima & Umgebungsverlauf */}
+      {activeSubTab === 'klima' && (
+        <div className="space-y-6">
+          <EnvironmentHistory />
+        </div>
+      )}
+
+      {/* SubTab 5: Hardware Ports X0 to X7 Overview */}
       {activeSubTab === 'ports' && (
         <div className="space-y-6">
-          {/* Summary Strip */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white p-4 rounded-sm border border-slate-200 shadow-xs flex items-center justify-between">
               <div>
@@ -222,7 +533,7 @@ export default function DeviceSettings() {
               <div>
                 <span className="text-xs font-medium text-slate-500 block">X3 Start-Button Zustand</span>
                 <span className="text-sm font-bold text-slate-900 capitalize">
-                  {x3Status === 'running' ? 'Aktiv (Grün #16a34a)' : x3Status === 'starting' ? 'Startet (Gelb #d97706)' : 'Bereit (Grau #64748b)'}
+                  {x3Status === 'running' ? 'Aktiv (Grün)' : x3Status === 'starting' ? 'Startet (Gelb)' : 'Bereit (Grau)'}
                 </span>
               </div>
               <div className={`w-10 h-10 rounded-sm flex items-center justify-center font-bold text-xs ${
@@ -237,7 +548,6 @@ export default function DeviceSettings() {
             </div>
           </div>
 
-          {/* Detailed Ports Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {ports.map((port) => {
               const isActive = port.status === 'active';
@@ -274,7 +584,6 @@ export default function DeviceSettings() {
                     </div>
                   </div>
 
-                  {/* Electrical Telemetry */}
                   <div className="mt-4 pt-3 border-t border-slate-100 space-y-1.5 font-mono text-xs">
                     <div className="flex justify-between">
                       <span className="text-slate-400">Spannung:</span>
@@ -307,178 +616,129 @@ export default function DeviceSettings() {
         </div>
       )}
 
-      {/* SubTab 4: OPC UA & Baumer Settings */}
-      {activeSubTab === 'opcua' && (
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-sm border border-slate-200 shadow-xs space-y-6">
-            <div className="border-b border-slate-100 pb-3">
-              <h4 className="font-bold text-slate-900 text-sm">Baumer CC50 & OPC UA Server-Konfiguration</h4>
-              <p className="text-xs text-slate-500">Knotenadressen, Endpoints und Abtastintervalle</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">OPC UA Endpoint URL</label>
-                <input 
-                  type="text" 
-                  defaultValue="opc.tcp://192.168.1.10:4840" 
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-sm font-mono text-slate-800 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Namespace Index</label>
-                <input 
-                  type="number" 
-                  defaultValue={2} 
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-sm font-mono text-slate-800 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Baumer Sensor Node-ID (Drehmoment)</label>
-                <input 
-                  type="text" 
-                  defaultValue="ns=2;i=120" 
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-sm font-mono text-slate-800 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Abtastrate (ms)</label>
-                <input 
-                  type="number" 
-                  defaultValue={20} 
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-sm font-mono text-slate-800 focus:outline-none focus:border-indigo-500"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-3">
-              <button
-                onClick={handleSave}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-sm text-xs font-bold shadow-xs transition-colors cursor-pointer"
-              >
-                Konfiguration an OPC UA Server senden
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* SubTab 6: Service Menu with Variables */}
+      {activeSubTab === 'service' && (
+        <ServiceMenu />
       )}
 
-      {/* SubTab 5: PSE Motor Drive Settings */}
-      {activeSubTab === 'pse' && (
-        <div className="space-y-6">
-          <div className="bg-white p-6 rounded-sm border border-slate-200 shadow-xs space-y-6">
-            <div className="border-b border-slate-100 pb-3">
-              <h4 className="font-bold text-slate-900 text-sm">PSE Antriebs-Regelung & Grenzwerte</h4>
-              <p className="text-xs text-slate-500">Sicherheitsabschaltungen, Rampenzeiten und PID-Parameter</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Nennstrom (A)</label>
-                <input 
-                  type="number" 
-                  defaultValue={4.8} 
-                  step="0.1"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-sm font-mono text-slate-800"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Spitzenstrom Limit (A)</label>
-                <input 
-                  type="number" 
-                  defaultValue={12.5} 
-                  step="0.5"
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-sm font-mono text-slate-800"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="font-bold text-slate-700">Abschaltgrenze Drehmoment (Nm)</label>
-                <input 
-                  type="number" 
-                  defaultValue={100.0} 
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-sm font-mono text-slate-800"
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end pt-3">
-              <button
-                onClick={handleSave}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-sm text-xs font-bold shadow-xs transition-colors cursor-pointer"
-              >
-                In PSE-EEPROM schreiben
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* SubTab 7: Diagnostics with live logs */}
+      {activeSubTab === 'diagnose' && (
+        <Diagnostics />
       )}
 
-      {activeSubTab === 'ai' && (
-        <div className="bg-white border border-slate-300 p-6 rounded-sm space-y-6">
-          <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
-            <div className="bg-blue-100 p-3 rounded-lg border border-blue-200">
-              <Cloud className="w-6 h-6 text-blue-600" />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-slate-800">Google AI Studio API Integration</h3>
-              <p className="text-sm text-slate-500">Verbindung zur Cloud-KI für smarte Datenanalyse und Mustererkennung (Gemini)</p>
-            </div>
-          </div>
-
-          <div className="bg-slate-50 p-5 border border-slate-200 rounded-sm">
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="space-y-1">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="font-bold text-slate-800">Cloud API ist verfügbar</span>
-                </div>
-                <p className="text-xs text-slate-500 max-w-xl">
-                  Mit einem Klick verbinden Sie das Testsystem mit der Google AI Studio Cloud. 
-                  Die KI analysiert anschließend Torsionskurven automatisch auf versteckte Anomalien, 
-                  die mit herkömmlichen Grenzwerten schwer zu erkennen sind.
-                </p>
+      {/* SubTab 8: Raspberry Pi GPIO & Kiosk info */}
+      {activeSubTab === 'rpi' && (
+        <div className="space-y-6 max-w-4xl">
+          {/* Main Card: Automated 1-Script Installer */}
+          <div className="bg-white rounded-sm p-6 border border-slate-300 shadow-sm space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex items-center space-x-2">
+                <Terminal className="w-5 h-5 text-indigo-600" />
+                <h3 className="font-bold text-slate-900 text-base">Raspberry Pi 5 Schnell-Installation (1-Befehl Setup)</h3>
               </div>
-              <button 
-                onClick={() => {
-                  alert('Verbindung zur Google AI Studio Cloud wird initiiert...');
-                }}
-                className="whitespace-nowrap px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm font-bold shadow-md transition-colors cursor-pointer flex items-center gap-2"
-              >
-                <Cloud className="w-4 h-4" />
-                Mit einem Klick verbinden
-              </button>
+              <span className="px-2 py-0.5 bg-indigo-50 border border-indigo-200 text-indigo-800 text-[11px] font-bold rounded-sm">
+                Debian 12 / Raspberry Pi OS
+              </span>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Führen Sie auf Ihrem frisch installierten Raspberry Pi 5 im Terminal einfach den folgenden Installationsbefehl aus. 
+              Das Skript installiert <strong>Node.js LTS</strong>, alle Build-Tools, richtet die Datenbank ein, kompiliert die Anwendung, 
+              erstellt einen <strong>systemd Autostart-Hintergrunddienst</strong> und konfiguriert den <strong>Chromium Kiosk-Modus</strong> für den Waveshare 10.1" Touchscreen.
+            </p>
+
+            <div className="bg-slate-900 rounded-sm p-4 text-slate-200 font-mono text-xs space-y-2 border border-slate-800">
+              <div className="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-1.5 text-[11px]">
+                <span>Option A: Automatisches 1-Befehl Installationsskript (im Terminal ausführen):</span>
+              </div>
+              <div className="text-emerald-400 select-all p-2 bg-slate-950 rounded-sm border border-slate-800 font-bold overflow-x-auto">
+                curl -fsSL https://raw.githubusercontent.com/norma-torsion/applet/main/install_pi5.sh -o install_pi5.sh || chmod +x install_pi5.sh && bash install_pi5.sh
+              </div>
+            </div>
+
+            {/* Manual Step-by-Step commands */}
+            <div className="space-y-3 pt-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                Option B: Schritt-für-Schritt Terminal-Befehle
+              </h4>
+              <div className="bg-slate-900 p-4 rounded-sm font-mono text-xs space-y-2.5 text-slate-300">
+                <div>
+                  <span className="text-slate-500 block"># 1. System updaten und Node.js 20 LTS installieren:</span>
+                  <span className="text-emerald-400">sudo apt update && sudo apt install -y curl git build-essential sqlite3 chromium-browser</span>
+                  <br />
+                  <span className="text-emerald-400">curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -</span>
+                  <br />
+                  <span className="text-emerald-400">sudo apt install -y nodejs</span>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800">
+                  <span className="text-slate-500 block"># 2. Projektverzeichnis anlegen und Dateien einspielen (oder ZIP entpacken):</span>
+                  <span className="text-emerald-400">mkdir -p ~/norma-pruefstand && cd ~/norma-pruefstand</span>
+                  <br />
+                  <span className="text-slate-400"># (Entpacken Sie hier die heruntergeladene Projekt-ZIP oder klonen Sie Ihr Repo)</span>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800">
+                  <span className="text-slate-500 block"># 3. NPM Abhängigkeiten installieren und Build erstellen:</span>
+                  <span className="text-emerald-400">npm install</span>
+                  <br />
+                  <span className="text-emerald-400">npm run build</span>
+                  <br />
+                  <span className="text-emerald-400">npm start</span>
+                </div>
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 border border-slate-200 rounded-sm">
-              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">Features</h4>
-              <ul className="space-y-2 text-sm text-slate-600">
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500" /> Automatischer Prüfbericht (KI-generiert)</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500" /> Erkennung von Materialermüdung</li>
-                <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-emerald-500" /> Prädiktive Wartungsempfehlungen</li>
-              </ul>
+          {/* Autostart & Service Management */}
+          <div className="bg-white rounded-sm p-6 border border-slate-300 shadow-sm space-y-4">
+            <h4 className="font-bold text-slate-900 text-sm border-b border-slate-200 pb-2">
+              Autostart & Dienst-Steuerung (systemd)
+            </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs font-mono">
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-sm space-y-1">
+                <span className="font-bold text-slate-700 block">Status prüfen:</span>
+                <span className="text-indigo-700 select-all font-bold">sudo systemctl status norma-pruefstand</span>
+              </div>
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-sm space-y-1">
+                <span className="font-bold text-slate-700 block">Live-Logs (OPC UA / SQL):</span>
+                <span className="text-indigo-700 select-all font-bold">journalctl -u norma-pruefstand -f</span>
+              </div>
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-sm space-y-1">
+                <span className="font-bold text-slate-700 block">Dienst neustarten:</span>
+                <span className="text-indigo-700 select-all font-bold">sudo systemctl restart norma-pruefstand</span>
+              </div>
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-sm space-y-1">
+                <span className="font-bold text-slate-700 block">Dienst stoppen:</span>
+                <span className="text-indigo-700 select-all font-bold">sudo systemctl stop norma-pruefstand</span>
+              </div>
             </div>
-            <div className="p-4 border border-slate-200 rounded-sm">
-              <h4 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2">API-Status</h4>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between border-b border-slate-100 pb-1">
-                  <span className="text-slate-500">Endpunkt</span>
-                  <span className="font-mono text-slate-800">gemini-pro-latest</span>
-                </div>
-                <div className="flex justify-between border-b border-slate-100 pb-1">
-                  <span className="text-slate-500">Latenz</span>
-                  <span className="font-mono text-emerald-600">~120ms</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-500">Sicherer Tunnel</span>
-                  <span className="font-mono text-emerald-600">Aktiv (TLS 1.3)</span>
-                </div>
+          </div>
+
+          {/* Waveshare Display & GPIO Pinout */}
+          <div className="bg-white rounded-sm p-6 border border-slate-300 shadow-sm space-y-4">
+            <h4 className="font-bold text-slate-900 text-sm border-b border-slate-200 pb-2">
+              Waveshare 10.1" IPS Touchscreen & GPIO Belegung
+            </h4>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-mono text-slate-700">
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-sm">
+                <strong>GPIO 17 (Pin 11):</strong> Eingang X5 Start-Taster (Pull-Down)
+              </div>
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-sm">
+                <strong>GPIO 27 (Pin 13):</strong> Eingang DI X6 Referenz-Sensor (0.0°)
+              </div>
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-sm">
+                <strong>GPIO 22 (Pin 15):</strong> Ausgang X7 Lüfter-Relais (24V)
+              </div>
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-sm">
+                <strong>GPIO 23 (Pin 16):</strong> Ausgang LED Status (Grün)
+              </div>
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-sm">
+                <strong>Ethernet (RJ45):</strong> Baumer CC50 (192.168.1.10:4840)
+              </div>
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-sm">
+                <strong>RS485 / CAN / USB:</strong> PSE Motor-Antriebssteuerung
               </div>
             </div>
           </div>

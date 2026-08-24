@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { io, Socket } from 'socket.io-client';
 
 export type ProgramType = 'service' | 'verdrehmoment' | 'anfahren' | 'kalibrierung';
 export type X3Status = 'idle' | 'starting' | 'running' | 'stopping';
 export type X5Status = 'idle' | 'armed' | 'triggering' | 'recording';
 export type HomeStatus = 'homed' | 'moving' | 'uncalibrated';
+
 
 export interface PortTelemetry {
   id: string;
@@ -409,6 +411,8 @@ const initialRecords: TestRecord[] = [
 const TestBenchContext = createContext<TestBenchContextType | undefined>(undefined);
 
 export function TestBenchProvider({ children }: { children: ReactNode }) {
+  const [socket, setSocket] = useState<Socket | null>(null);
+
   const [x3Status, setX3Status] = useState<X3Status>('idle');
   const [x5Status, setX5Status] = useState<X5Status>('idle');
   const [activeProgram, setActiveProgram] = useState<ProgramType>('verdrehmoment');
@@ -728,12 +732,20 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
     setPorts(prev => prev.map(p => {
       if (p.id === portId) {
         const nextStatus = p.status === 'active' ? 'standby' : 'active';
+        
+        // Push state to Hardware via WebSocket if it's X7
+        if (portId === 'X7') {
+           const isActive = nextStatus === 'active';
+           socket?.emit('set_gpio', { pin: 'X7', state: isActive });
+           setSequenceState(s => ({ ...s, fanX7Active: isActive }));
+        }
+        
         return { ...p, status: nextStatus };
       }
       return p;
     }));
     addLog(`Port ${portId} Status geändert`, 'info', 'PORT');
-  }, [addLog]);
+  }, [addLog, socket]);
 
   // Sequence Config & Step Actions
   const updateSequenceConfig = useCallback((updates: Partial<SequenceConfig>) => {
@@ -1035,25 +1047,48 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
     addRecord
   ]);
 
-  // Telemetry loop
+  // Telemetry loop via Socket.IO
+  useEffect(() => {
+    const newSocket = io();
+    setSocket(newSocket);
+
+    newSocket.on('live_status', (data) => {
+      setOpcUaConnected(data.connected);
+      if (data.connected && data.liveTorque !== undefined) {
+        setLiveTorque(Number(data.liveTorque.toFixed(2)));
+        setMotorPosition(Number(data.motorPosition.toFixed(1)));
+      }
+
+      // Sync hardware GPIO states with sequence state
+      setSequenceState((prev) => {
+        // Only update if there's a hardware change to avoid infinite renders
+        // The hardware state OR the software state can trigger (e.g. touch or physical button)
+        const newX5 = data.gpio.x5 || prev.isX5Held;
+        const newX6 = data.gpio.x6 || prev.diX6Input;
+        const newX7 = data.gpio.x7;
+        
+        if (prev.isX5Held === newX5 && prev.diX6Input === newX6 && prev.fanX7Active === newX7) {
+           return prev; // no change
+        }
+        return {
+          ...prev,
+          isX5Held: newX5,
+          diX6Input: newX6,
+          fanX7Active: newX7
+        };
+      });
+    });
+
+    return () => {
+      newSocket.disconnect();
+    };
+  }, []);
+
   useEffect(() => {
     const interval = setInterval(async () => {
-      if (true) {
-        try {
-          const res = await fetch('/api/status');
-          const data = await res.json();
-          setOpcUaConnected(data.connected);
-          if (data.connected) {
-            setLiveTorque(Number(data.liveTorque.toFixed(2)));
-            setMotorPosition(Number(data.motorPosition.toFixed(1)));
-            // Could also sync X3/X5/Fan states if provided by API
-          }
-        } catch (e) {
-          // Ignore network errors
-        }
-      }
-      setTemperature(prev => Number((22.4 + Math.sin(Date.now() / 20000) * 0.6 + (Math.random() * 0.08 - 0.04)).toFixed(1)));
-      setHumidity(prev => Number((44.2 + Math.cos(Date.now() / 25000) * 1.5 + (Math.random() * 0.15 - 0.07)).toFixed(1)));
+      // Only simulate temp/humidity slightly
+      setTemperature(prev => Number((22.4 + (Math.random() * 0.08 - 0.04)).toFixed(1)));
+      setHumidity(prev => Number((44.2 + (Math.random() * 0.15 - 0.07)).toFixed(1)));
 
       const isRunning = x3Status === 'running';
       const isRec = x5Status === 'recording' || x5Status === 'triggering';
@@ -1071,6 +1106,8 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
         } else if (port.id === 'X6') {
           port.status = isRunning ? 'active' : 'standby';
           cBase = isRunning ? (isRec ? 4.2 : 2.1) : 0.35;
+        } else if (port.id === 'X7') {
+          port.status = sequenceStateRef.current?.fanX7Active ? 'active' : 'standby';
         }
 
         const v = Number((port.voltageNominal + vJitter).toFixed(2));
@@ -1081,21 +1118,14 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
       }));
 
       if (isRunning) {
-        const baseSin = Math.sin(Date.now() / 800) * (targetTorque * 0.45);
-        const noise = (Math.random() - 0.5) * 2.0;
         const isSeqRunning = sequenceStateRef.current?.isRunning;
-        const currentTorqueVal = Math.max(0.1, Number((targetTorque * 0.5 + baseSin + (isRec ? 12.0 : 0) + noise).toFixed(2)));
-
-        if (!isSeqRunning) {
-          setLiveTorque(currentTorqueVal);
-          setMaxTorque((prev: number) => Math.max(prev, currentTorqueVal));
-
-          setMotorPosition((prev: number) => {
-            const step = (motorSpeedRpm / 60) * 360 * 0.15;
-            const next = (prev + step) % 360.0;
-            if (next < prev) setMotorRevolutions((r: number) => r + 1);
-            return Number(next.toFixed(1));
-          });
+        
+        // If we don't have a real OPC UA connection, do not simulate the graph anymore
+        // Just record whatever is in liveTorqueRef
+        if (!opcUaConnected) {
+          if (!isSeqRunning) {
+             // Let it just be whatever liveTorque is (0.0 usually)
+          }
         }
 
         setTorqueData(prev => {
@@ -1116,8 +1146,8 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
           const t = prev.length > 0 ? prev[prev.length - 1].time + 1 : 0;
           const newPoint: TorquePoint = {
             time: t,
-            torque: isSeqRunning ? liveTorqueRef.current : currentTorqueVal,
-            position: isSeqRunning ? motorPosRef.current : motorPosition,
+            torque: liveTorqueRef.current,
+            position: motorPosRef.current,
             triggerActive: isRec
           };
           const updated = [...prev, newPoint];
@@ -1127,13 +1157,13 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
         if (isRec) {
           setSampleCount(c => c + 1);
         }
-      } else {
+      } else if (!opcUaConnected) {
         setLiveTorque(0.0);
       }
     }, 150);
 
     return () => clearInterval(interval);
-  }, [x3Status, x5Status, targetTorque, motorSpeedRpm, motorPosition]);
+  }, [x3Status, x5Status, targetTorque, motorSpeedRpm, motorPosition, opcUaConnected]);
 
   return (
     <TestBenchContext.Provider
