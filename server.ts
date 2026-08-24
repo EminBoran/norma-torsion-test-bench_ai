@@ -160,7 +160,13 @@ async function setupOpcUa() {
            if (Buffer.isBuffer(buf) && buf.length >= 2) {
               const rawValBE = buf.readInt16BE(0);
               const rawValLE = buf.readInt16LE(0);
-              currentTorque = (Math.abs(rawValBE) < Math.abs(rawValLE) ? Math.abs(rawValBE) : Math.abs(rawValLE)) / 100.0;
+              
+              // Node-RED Formula:
+              // raw = hexToS16
+              // cur_nm = -((((raw / 27648) * 20) - 10) * 2.5)
+              let raw = buf.readInt16BE(0); // Assuming Big-Endian for raw hexToS16
+              currentTorque = -((((raw / 27648) * 20) - 10) * 2.5);
+
            }
         } catch(e) {}
 
@@ -170,7 +176,7 @@ async function setupOpcUa() {
     const motorPosItem = ClientMonitoredItem.create(
       subscription,
       {
-        nodeId: "ns=6;i=33308",
+        nodeId: "ns=7;i=670",
         attributeId: AttributeIds.Value
       },
       {
@@ -270,7 +276,6 @@ app.get("/api/status", (req, res) => {
     liveTorque: currentTorque,
     motorPosition: currentPosition
   });
-});
 
 app.post("/api/motor/control", async (req, res) => {
   const { command, speed, targetNm } = req.body;
@@ -284,17 +289,23 @@ app.post("/api/motor/control", async (req, res) => {
     // Motor ProcessDataOutput (Port X0)
     const motorNodeId = "ns=7;i=640"; 
     
+    // IO-Link Baumer erwartet 32 Bytes OPC UA Buffer
     const buffer = Buffer.alloc(32);
     
-    // Wir wissen noch nicht genau die Byte-Struktur,
-    // raten aber Byte 0 und 1 fuer Enable (0x0F)
-    let enableWord = (command === 'enable' || command === 'start') ? 0x0F : 0x00;
+    // Commands from Node-RED logic:
+    // MOTOR_STOP  = "000000000000"; -> 6 Bytes 0
+    // MOTOR_RIGHT = "000000000011"; -> Byte 5 is 0x11
+    // MOTOR_LEFT  = "000000000012"; -> Byte 5 is 0x12
     
-    buffer.writeUInt8(enableWord, 0); 
-    buffer.writeUInt8(enableWord, 1);
-    if (speed) {
-        buffer.writeInt16BE(speed, 2);
+    let cmdByte = 0x00;
+    if (command === 'enable' || command === 'start' || command === 'right') {
+        cmdByte = 0x11;
+    } else if (command === 'left') {
+        cmdByte = 0x12;
     }
+    
+    // Set command byte at index 5
+    buffer.writeUInt8(cmdByte, 5); 
 
     await opcSession.write({
       nodeId: motorNodeId,
@@ -312,7 +323,7 @@ app.post("/api/motor/control", async (req, res) => {
     console.error("Error writing to OPC UA:", err);
     res.status(500).json({ error: "Failed to send command" });
   }
-});
+});});
 
 async function startServer() {
   await setupDatabase();
@@ -374,7 +385,20 @@ console.error = function(...args) { originalError.apply(console, args); broadcas
       if (Gpio) {
         try {
           if (pin === 'X7' && x7Relay) x7Relay.writeSync(state ? 1 : 0);
+          
           if (pin === 'LED' && statusLed) statusLed.writeSync(state ? 1 : 0);
+          
+          // Baumer LED an Port X6
+          if (pin === 'LED' && opcSession && isConnected) {
+              const ledBuffer = Buffer.alloc(32);
+              ledBuffer.writeUInt8(state ? 0x01 : 0x00, 0); // 0x01 = Green
+              opcSession.write({
+                  nodeId: "ns=7;i=645",
+                  attributeId: 13,
+                  value: { value: { dataType: 15, value: ledBuffer } }
+              }).catch(e => console.error("LED OPC UA error", e));
+          }
+
         } catch (e) {
            console.error(`Error setting GPIO ${pin}`, e);
         }
