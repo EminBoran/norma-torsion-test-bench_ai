@@ -289,6 +289,19 @@ async function startServer() {
   const server = http.createServer(app);
   const io = new Server(server, { cors: { origin: "*" } });
 
+const originalLog = console.log;
+const originalError = console.error;
+const logsCache = [];
+function broadcastLog(level, args) {
+  const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ');
+  const logEntry = { timestamp: new Date().toISOString(), level, message: msg };
+  logsCache.push(logEntry);
+  if(logsCache.length > 500) logsCache.shift();
+  io.emit('server_log', logEntry);
+}
+console.log = function(...args) { originalLog.apply(console, args); broadcastLog('info', args); };
+console.error = function(...args) { originalError.apply(console, args); broadcastLog('error', args); };
+
   // Initialize Hardware GPIOs on Raspberry Pi
   let Gpio: any;
   try {

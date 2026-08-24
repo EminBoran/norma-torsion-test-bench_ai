@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import { TestBenchProvider, useTestBench } from './context/TestBenchContext';
 import TouchscreenAblauf from './components/TouchscreenAblauf';
 import DeviceSettings from './components/DeviceSettings';
-import { Settings, X, Activity, Cpu, Compass } from 'lucide-react';
+import { Settings, X, Activity, Cpu, Compass, Terminal, Copy } from 'lucide-react';
 import { cn } from './lib/utils';
 
 function DashboardLayout() {
   const [showSettings, setShowSettings] = useState(false);
-  const { opcUaConnected, liveTorque, motorPosition, sequenceState } = useTestBench();
+  const [showLogs, setShowLogs] = useState(false);
+  const { opcUaConnected, liveTorque, motorPosition, sequenceState, serverLogs } = useTestBench();
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans text-slate-900 overflow-hidden flex-col">
@@ -44,6 +45,16 @@ function DashboardLayout() {
             </span>
           </div>
 
+          
+          <button 
+            onClick={() => setShowLogs(!showLogs)}
+            className="p-2 bg-slate-800 hover:bg-slate-700 text-green-400 rounded-md transition-colors cursor-pointer border border-slate-700 flex items-center space-x-1"
+            title="Diagnose Konsole"
+          >
+            <Terminal className="w-4 h-4" />
+            <span className="text-xs font-bold">Logs</span>
+          </button>
+    
           <button 
             onClick={() => setShowSettings(!showSettings)}
             className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-md transition-colors cursor-pointer"
@@ -58,6 +69,29 @@ function DashboardLayout() {
         <TouchscreenAblauf />
         
         {/* Settings Overlay Modal */}
+        
+        {showLogs && (
+          <div className="absolute inset-0 bg-slate-900/90 backdrop-blur-sm z-50 flex flex-col p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-xl font-bold text-white flex items-center"><Terminal className="mr-2" /> System-Diagnose & Logs</h2>
+              <div className="flex space-x-3">
+                <button onClick={() => navigator.clipboard.writeText(serverLogs.map(l => `[${l.timestamp}] ${l.level.toUpperCase()}: ${l.message}`).join('\n'))} className="flex items-center px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-sm cursor-pointer"><Copy className="w-4 h-4 mr-1.5"/> Kopieren</button>
+                <button onClick={() => setShowLogs(false)} className="p-1.5 bg-slate-800 hover:bg-red-600 text-white rounded cursor-pointer"><X className="w-5 h-5" /></button>
+              </div>
+            </div>
+            <div className="flex-1 bg-black rounded-lg p-4 overflow-y-auto font-mono text-xs text-green-400 border border-slate-700 shadow-inner flex flex-col-reverse">
+              <div>
+              {serverLogs.map((log, i) => (
+                <div key={i} className={log.level === 'error' ? 'text-red-400 py-0.5' : 'text-green-400 py-0.5 border-b border-slate-800/50'}>
+                  <span className="text-slate-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span> {log.message}
+                </div>
+              ))}
+              {serverLogs.length === 0 && <div className="text-slate-500 italic">Warte auf Logs vom OPC UA Server...</div>}
+              </div>
+            </div>
+          </div>
+        )}
+    
         {showSettings && (
           <div className="absolute inset-0 bg-slate-900/80 backdrop-blur-sm z-50 overflow-y-auto flex items-center justify-center p-6">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl max-h-full flex flex-col overflow-hidden">

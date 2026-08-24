@@ -132,6 +132,7 @@ interface TestBenchContextType {
   logs: LogEntry[];
   records: TestRecord[];
   opcUaConnected: boolean;
+  serverLogs: any[];
   templates: ReportTemplate[];
   selectedRecordId: string | null;
   // Actions
@@ -520,6 +521,7 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const [opcUaConnected, setOpcUaConnected] = useState(false);
+  const [serverLogs, setServerLogs] = useState<any[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([
     { id: 1, timestamp: new Date(Date.now() - 60000).toISOString().substring(11, 19), level: 'info', message: 'System initialisiert - Norma Torsion Test Bench (Baumer CC50 & OPC UA)', tag: 'SYSTEM' },
     { id: 2, timestamp: new Date(Date.now() - 45000).toISOString().substring(11, 19), level: 'x3', message: 'X3 Main-Start im Standby (Farbe: Neutral-Grau #64748b)', tag: 'X3-MAIN' },
@@ -1211,6 +1213,7 @@ export function TestBenchProvider({ children }: { children: ReactNode }) {
         ports,
         logs,
         opcUaConnected,
+    serverLogs,
         records,
         templates,
         selectedRecordId,
