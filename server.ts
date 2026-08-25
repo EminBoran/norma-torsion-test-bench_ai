@@ -3,7 +3,8 @@ import http from "http";
 import express from "express";
 import path from "path";
 import cors from "cors";
-import { OPCUAClient, AttributeIds, ClientSubscription, ClientMonitoredItem, TimestampsToReturn, DataType } from "node-opcua";
+import { OPCUAClient, AttributeIds, ClientSubscription, ClientMonitoredItem, TimestampsToReturn, DataType, MessageSecurityMode, SecurityPolicy } from "node-opcua";
+import { OPCUACertificateManager } from "node-opcua-certificate-manager";
 import { Server } from "socket.io";
 import * as dotenv from "dotenv";
 import { createRequire } from "module";
@@ -247,8 +248,16 @@ async function sendLedCommand(ledColorByte: number): Promise<boolean> {
 // ----------------------------------------------------
 async function setupOpcUa() {
   try {
+    const certManager = new OPCUACertificateManager({
+      automaticallyAcceptUnknownCertificate: true,
+      rootFolder: "./pki"
+    });
+    
     opcClient = OPCUAClient.create({
       endpointMustExist: false,
+      securityMode: MessageSecurityMode.SignAndEncrypt,
+      securityPolicy: SecurityPolicy.Basic256Sha256,
+      serverCertificateManager: certManager,
       connectionStrategy: {
         maxRetry: 10,
         initialDelay: 1000,
