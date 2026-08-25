@@ -4,7 +4,6 @@ import express from "express";
 import path from "path";
 import cors from "cors";
 import { OPCUAClient, AttributeIds, ClientSubscription, ClientMonitoredItem, TimestampsToReturn, DataType } from "node-opcua";
-import { createServer as createViteServer } from "vite";
 import { Server } from "socket.io";
 import * as dotenv from "dotenv";
 import { createRequire } from "module";
@@ -695,7 +694,8 @@ async function startServer() {
   }, 100);
 
   if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
+    const viteMod = await import("vite");
+    const vite = await viteMod.createServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
