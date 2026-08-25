@@ -89,8 +89,8 @@ async function setupDatabase() {
 // Node-RED V31 Constants & Settings
 // ----------------------------------------------------
 const MOTOR_STOP  = "000000000000"; // 6 bytes 0x00
-const MOTOR_RIGHT = "000000000011"; // 5 bytes 0x00, byte 5: 0x11
-const MOTOR_LEFT  = "000000000012"; // 5 bytes 0x00, byte 5: 0x12
+const MOTOR_RIGHT = "001100000000"; // 5 bytes 0x00, byte 5: 0x11
+const MOTOR_LEFT  = "001200000000"; // 5 bytes 0x00, byte 5: 0x12
 
 const LED_OFF    = 0x00;
 const LED_GREEN  = 0x01;
@@ -163,15 +163,12 @@ function getPosHexCmd(posDec: number): string {
   let p = Math.floor(posDec);
   if (p < 0) p = 0xFFFFFFFF + p + 1;
   const hex = (p >>> 0).toString(16).toUpperCase().padStart(8, "0");
-  return hex + "0014"; // 12 chars = 6 bytes
+  return "0014" + hex; // Control Word first (0014), then 4 bytes Position
 }
 
 // Helper to convert hex string to 32-byte OPC UA Buffer
 function hexTo32ByteBuffer(hexStr: string): Buffer {
-  const buf = Buffer.alloc(32);
-  const data = Buffer.from(hexStr, 'hex');
-  data.copy(buf, 0);
-  return buf;
+  return Buffer.from(hexStr, 'hex'); // Sende genau die Länge des Befehls (für Motor 6 Bytes)
 }
 
 // ----------------------------------------------------
@@ -199,7 +196,7 @@ const NODE_DEADMAN_IN= "ns=7;i=697"; // Port X7 Input (Totmann Switch)
 async function writeOpcNode(nodeId: string, buffer: Buffer): Promise<boolean> {
   if (!opcSession || !isConnected) return false;
   try {
-    await opcSession.write({
+    const result = await opcSession.write({
       nodeId: nodeId,
       attributeId: AttributeIds.Value,
       value: {
@@ -209,6 +206,22 @@ async function writeOpcNode(nodeId: string, buffer: Buffer): Promise<boolean> {
         }
       }
     });
+    console.log("[OPC UA] Write result for " + nodeId + ":", result.toString());
+    if (result.value !== 0) { // Good is 0
+       console.log("Maybe try ByteArray...");
+       const result2 = await opcSession.write({
+        nodeId: nodeId,
+        attributeId: AttributeIds.Value,
+        value: {
+          value: {
+            dataType: DataType.Byte,
+            arrayType: VariantArrayType.Array,
+            value: Array.from(buffer)
+          }
+        }
+      });
+      console.log("[OPC UA] Fallback Write result for " + nodeId + ":", result2.toString());
+    }
     return true;
   } catch (err: any) {
     console.error(`[OPC UA] Error writing to ${nodeId}:`, err.message);
@@ -223,7 +236,7 @@ async function sendMotorCommand(hexCmd: string): Promise<boolean> {
 }
 
 async function sendLedCommand(ledColorByte: number): Promise<boolean> {
-  const buf = Buffer.alloc(32);
+  const buf = Buffer.alloc(1);
   buf.writeUInt8(ledColorByte, 0);
   last_led_sent = ledColorByte;
   return await writeOpcNode(NODE_LED_OUT, buf);
@@ -248,7 +261,11 @@ async function setupOpcUa() {
     isConnected = true;
     console.log("[OPC UA] Verbunden mit Baumer Master!");
 
-    opcSession = await opcClient.createSession();
+    const userIdentity = {
+      userName: process.env.OPC_USERNAME || "admin",
+      password: process.env.OPC_PASSWORD || "admin"
+    };
+    opcSession = await opcClient.createSession(userIdentity);
     console.log("[OPC UA] Session erfolgreich erstellt!");
 
     const subscription = ClientSubscription.create(opcSession, {
