@@ -693,19 +693,28 @@ async function startServer() {
     });
   }, 100);
 
-  if (process.env.NODE_ENV !== "production") {
+  const distPath = path.join(process.cwd(), 'dist');
+  const indexFile = path.join(distPath, 'index.html');
+  
+  // Im Edge-System (Raspberry Pi) wird meistens "node dist/server.cjs" ausgeführt.
+  // In diesem Fall wollen wir die produktiven Dateien ausliefern, ohne Vite zu laden.
+  const isCompiled = process.argv[1] && process.argv[1].endsWith('server.cjs');
+  const isProduction = process.env.NODE_ENV === "production" || isCompiled;
+
+  if (isProduction && fs.existsSync(indexFile)) {
+    console.log("Auslieferung der produktiven Frontend-Dateien aus /dist");
+    app.use(express.static(distPath));
+    app.get('*all', (req, res) => {
+      res.sendFile(indexFile);
+    });
+  } else {
+    console.log("Entwicklungsmodus: Lade Vite (kann dauern)...");
     const viteMod = await import("vite");
     const vite = await viteMod.createServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*all', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
   }
 
   server.listen(PORT, "0.0.0.0", () => {
