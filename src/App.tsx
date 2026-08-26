@@ -112,7 +112,7 @@ export default function App() {
 
   const socketRef = useRef<Socket | null>(null);
 
-  // Initialize WebSockets and fetch records
+  // Initialize WebSockets and fetch records + continuous polling
   useEffect(() => {
     const socket = io();
     socketRef.current = socket;
@@ -123,8 +123,22 @@ export default function App() {
 
     fetchRecords();
 
+    // High-frequency polling fallback (200ms) for reliable live dashboard updates
+    const pollInterval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/status');
+        if (res.ok) {
+          const liveData = await res.json();
+          setStatus(liveData);
+        }
+      } catch (err) {
+        // network err
+      }
+    }, 200);
+
     return () => {
       socket.disconnect();
+      clearInterval(pollInterval);
     };
   }, []);
 

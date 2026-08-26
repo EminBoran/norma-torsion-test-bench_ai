@@ -260,102 +260,67 @@ async function sendLedCommand(ledColorByte: number): Promise<boolean> {
 // ----------------------------------------------------
 async function setupOpcUa() {
   try {
-    const certManager = new OPCUACertificateManager({
-      automaticallyAcceptUnknownCertificate: true,
-      rootFolder: "./pki"
-    });
-    
     opcClient = OPCUAClient.create({
       endpointMustExist: false,
-      securityMode: MessageSecurityMode.SignAndEncrypt,
-      securityPolicy: SecurityPolicy.Basic256Sha256,
-      serverCertificateManager: certManager,
+      securityMode: MessageSecurityMode.None,
+      securityPolicy: SecurityPolicy.None,
       connectionStrategy: {
-        maxRetry: 10,
-        initialDelay: 1000,
-        maxDelay: 5000,
-      }
+        maxRetry: 100,
+        initialDelay: 500,
+        maxDelay: 2000,
+      },
+      connectionTimeout: 5000
     });
 
-    console.log(`[OPC UA] Verbinde zu ${endpointUrl}...`);
+    console.log(`[OPC UA] Verbinde mit Baumer Master an ${endpointUrl} (Mode: None/None)...`);
     await opcClient.connect(endpointUrl);
     isConnected = true;
-    console.log("[OPC UA] Verbunden mit Baumer Master!");
+    console.log("[OPC UA] ✅ Verbindung hergestellt!");
 
-    const userIdentity = {
-      userName: process.env.OPC_USERNAME || "admin",
-      password: process.env.OPC_PASSWORD || "admin"
-    };
-    opcSession = await opcClient.createSession(userIdentity);
-    console.log("[OPC UA] Session erfolgreich erstellt!");
+    // Baumer accepts Anonymous Session
+    opcSession = await opcClient.createSession();
+    console.log("[OPC UA] ✅ OPC UA Session erfolgreich autorisiert!");
 
-    const subscription = ClientSubscription.create(opcSession, {
-      requestedPublishingInterval: 50,
-      requestedLifetimeCount: 100,
-      requestedMaxKeepAliveCount: 10,
-      maxNotificationsPerPublish: 100,
-      publishingEnabled: true,
-      priority: 10
-    });
+    // Start fast polling loop (every 50ms) to ensure continuous live data stream
+    setInterval(async () => {
+      if (!opcSession || !isConnected) return;
+      try {
+        // Read Motor Pos (ns=7;i=690) and Torque (ns=7;i=691) in parallel
+        const [motorVal, torqueVal] = await Promise.all([
+          opcSession.read({ nodeId: NODE_MOTOR_IN, attributeId: AttributeIds.Value }),
+          opcSession.read({ nodeId: NODE_TORQUE_IN, attributeId: AttributeIds.Value })
+        ]);
 
-    // 1. Monitor Torque Sensor (Port X1 Input: ns=7;i=691)
-    const torqueItem = ClientMonitoredItem.create(
-      subscription,
-      { nodeId: NODE_TORQUE_IN, attributeId: AttributeIds.Value },
-      { samplingInterval: 50, discardOldest: true, queueSize: 10 },
-      TimestampsToReturn.Both
-    );
-
-    torqueItem.on("changed", (dataValue) => {
-      if (dataValue?.value?.value) {
-        try {
-          const buf = dataValue.value.value;
-          if (Buffer.isBuffer(buf) && buf.length >= 2) {
-            // Node-RED Formula:
-            // raw = hexToS16(val.substring(0, 4))
-            // cur_nm = -((((raw / 27648) * 20) - 10) * 2.5 - offset)
-            const raw = buf.readInt16BE(0);
-            const calculated = -((((raw / 27648.0) * 20.0) - 10.0) * 2.5 - settings.torque_offset);
-            cur_nm = Number(calculated.toFixed(3));
-          }
-        } catch (e: any) {
-          console.error("Torque decode error:", e.message);
-        }
-      }
-    });
-
-    // 2. Monitor Motor Position (Port X0 Input: ns=7;i=690)
-    const motorItem = ClientMonitoredItem.create(
-      subscription,
-      { nodeId: NODE_MOTOR_IN, attributeId: AttributeIds.Value },
-      { samplingInterval: 50, discardOldest: true, queueSize: 10 },
-      TimestampsToReturn.Both
-    );
-
-    motorItem.on("changed", (dataValue) => {
-      if (dataValue?.value?.value) {
-        try {
-          const buf = dataValue.value.value;
+        // Decode Motor Position (32 Byte Buffer from Baumer Master)
+        if (motorVal?.value?.value) {
+          const buf = motorVal.value.value;
           if (Buffer.isBuffer(buf) && buf.length >= 4) {
-            // Node-RED Formula:
-            // pos = hexToS32(val.substring(0, 8))
-            // cur_deg = (cur_pos - home_pos) * 0.9
             const pos = buf.readInt32BE(0);
             cur_pos = pos;
             cur_deg = Number(((cur_pos - settings.home_pos) * 0.9).toFixed(1));
           }
-        } catch (e: any) {
-          console.error("Motor pos decode error:", e.message);
         }
-      }
-    });
 
-    // Set initial LED to Blue (Ready)
-    sendLedCommand(LED_BLUE);
+        // Decode Torque Sensor (32 Byte Buffer from Baumer Master)
+        if (torqueVal?.value?.value) {
+          const buf = torqueVal.value.value;
+          if (Buffer.isBuffer(buf) && buf.length >= 2) {
+            const raw = buf.readInt16BE(0);
+            // Formula: -((((raw / 27648) * 20) - 10) * 2.5 - offset)
+            const calculated = -((((raw / 27648.0) * 20.0) - 10.0) * 2.5 - settings.torque_offset);
+            cur_nm = Number(calculated.toFixed(3));
+          }
+        }
+      } catch (err: any) {
+        // Session might need reconnect if connection dropped
+      }
+    }, 50);
 
   } catch (err: any) {
     console.warn("[OPC UA] Verbindung fehlgeschlagen (Mock/Fallback aktiv):", err.message);
     isConnected = false;
+    // Retry connection after 5 seconds
+    setTimeout(() => setupOpcUa(), 5000);
   }
 }
 
