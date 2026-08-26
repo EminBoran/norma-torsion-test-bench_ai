@@ -19,7 +19,7 @@ import { OPCUACertificateManager } from "node-opcua-certificate-manager";
 import { Server } from "socket.io";
 import * as dotenv from "dotenv";
 import { createRequire } from "module";
-import { runComprehensiveMasterScan } from "./server_diagnostics";
+import { runComprehensiveMasterScan, runMotor1DegDiagnosticTest, runLedTestSuite } from "./server_diagnostics";
 
 dotenv.config();
 
@@ -202,6 +202,7 @@ let isConnected = false;
 const NODE_MOTOR_OUT = "ns=7;i=640"; // Port X0 Output (Motor command)
 const NODE_MOTOR_IN  = "ns=7;i=690"; // Port X0 Input (Motor position feedback)
 const NODE_TORQUE_IN = "ns=7;i=691"; // Port X1 Input (HBM T22 Torque Sensor)
+const NODE_LED_X3_OUT= "ns=7;i=643"; // Port X3 Output (Taster / DO)
 const NODE_LED_OUT   = "ns=7;i=646"; // Port X6 Output (IFM Button LED)
 const NODE_HOME_IN   = "ns=7;i=696"; // Port X6 Input (Home Button)
 const NODE_DEADMAN_IN= "ns=7;i=697"; // Port X7 Input (Totmann Switch)
@@ -219,23 +220,24 @@ async function writeOpcNode(nodeId: string, buffer: Buffer): Promise<boolean> {
         }
       }
     });
-    console.log("[OPC UA] Write result for " + nodeId + ":", result.toString());
-    if (result.value !== 0) { // Good is 0
-       console.log("Maybe try ByteArray...");
-       const result2 = await opcSession.write({
-        nodeId: nodeId,
-        attributeId: AttributeIds.Value,
-        value: {
-          value: {
-            dataType: DataType.Byte,
-            arrayType: VariantArrayType.Array,
-            value: Array.from(buffer)
-          }
-        }
-      });
-      console.log("[OPC UA] Fallback Write result for " + nodeId + ":", result2.toString());
+    
+    if (result.equals(StatusCodes.Good)) {
+      return true;
     }
-    return true;
+
+    // Fallback: ByteArray
+    const result2 = await opcSession.write({
+      nodeId: nodeId,
+      attributeId: AttributeIds.Value,
+      value: {
+        value: {
+          dataType: DataType.Byte,
+          arrayType: VariantArrayType.Array,
+          value: Array.from(buffer)
+        }
+      }
+    });
+    return result2.equals(StatusCodes.Good);
   } catch (err: any) {
     console.error(`[OPC UA] Error writing to ${nodeId}:`, err.message);
     return false;
@@ -243,16 +245,36 @@ async function writeOpcNode(nodeId: string, buffer: Buffer): Promise<boolean> {
 }
 
 async function sendMotorCommand(hexCmd: string): Promise<boolean> {
-  const buf = hexTo32ByteBuffer(hexCmd);
-  console.log(`[MOTOR] Sende Hex: ${hexCmd} an ${NODE_MOTOR_OUT}`);
-  return await writeOpcNode(NODE_MOTOR_OUT, buf);
+  const rawBuf = Buffer.from(hexCmd, 'hex');
+  const buf32 = Buffer.alloc(32);
+  rawBuf.copy(buf32, 0);
+
+  console.log(`[MOTOR] Sende Hex: ${hexCmd} (32-Byte Buffer & unpadded) an ${NODE_MOTOR_OUT}`);
+  
+  // Try 32-byte padded ByteString first
+  let ok = await writeOpcNode(NODE_MOTOR_OUT, buf32);
+  if (!ok) {
+    // Try unpadded buffer
+    ok = await writeOpcNode(NODE_MOTOR_OUT, rawBuf);
+  }
+  return ok;
 }
 
 async function sendLedCommand(ledColorByte: number): Promise<boolean> {
-  const buf = Buffer.alloc(1);
-  buf.writeUInt8(ledColorByte, 0);
   last_led_sent = ledColorByte;
-  return await writeOpcNode(NODE_LED_OUT, buf);
+  const buf1 = Buffer.from([ledColorByte]);
+  const buf32 = Buffer.alloc(32);
+  buf32[0] = ledColorByte;
+
+  // Send to both X3, X6 and X5
+  const ledTargets = [NODE_LED_X3_OUT, NODE_LED_OUT, "ns=7;i=645"];
+  for (const target of ledTargets) {
+    try {
+      await writeOpcNode(target, buf1);
+      await writeOpcNode(target, buf32);
+    } catch (e) {}
+  }
+  return true;
 }
 
 // ----------------------------------------------------
@@ -635,6 +657,36 @@ app.get("/api/diagnostics/scan", async (req, res) => {
     res.json(report);
   } catch (err: any) {
     res.status(500).json({ error: "Diagnosescan fehlgeschlagen: " + err.message });
+  }
+});
+
+app.post("/api/diagnostics/motor-1deg-test", async (req, res) => {
+  try {
+    const target = req.body.endpoint || endpointUrl;
+    const creds = {
+      username: req.body.username || process.env.OPC_USERNAME || "admin",
+      password: req.body.password || process.env.OPC_PASSWORD || "admin"
+    };
+    const result = await runMotor1DegDiagnosticTest(target, creds);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: "1° Motor Bewegungstest fehlgeschlagen: " + err.message });
+  }
+});
+
+app.post("/api/diagnostics/led-test", async (req, res) => {
+  try {
+    const target = req.body.endpoint || endpointUrl;
+    const creds = {
+      username: req.body.username || process.env.OPC_USERNAME || "admin",
+      password: req.body.password || process.env.OPC_PASSWORD || "admin"
+    };
+    const port = req.body.port || "X3";
+    const colorCode = typeof req.body.color === "number" ? req.body.color : 0x05;
+    const result = await runLedTestSuite(target, creds, port, colorCode);
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: "LED / Taster-Test fehlgeschlagen: " + err.message });
   }
 });
 

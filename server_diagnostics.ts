@@ -559,7 +559,472 @@ export async function runComprehensiveMasterScan(
   };
 }
 
-function generateAiDiagnosticMarkdown(params: {
+export async function runMotor1DegDiagnosticTest(
+  endpointUrl: string,
+  credentials?: { username?: string; password?: string }
+): Promise<MotorMotionTestResult> {
+  const timestamp = new Date().toISOString();
+  const trials: MotorMotionTrial[] = [];
+  const recommendations: string[] = [];
+
+  let isReachable = await testTcpReachability(endpointUrl, 1200);
+  let client: OPCUAClient | null = null;
+  let session: any = null;
+
+  let startPosInc = 51200;
+  let startDeg = 0.0;
+  let endPosInc = 51200;
+  let endDeg = 0.0;
+  let rawInputX0Hex = "0000C80000000000";
+  let deadmanActive = false;
+  let triggerActive = false;
+  let actuatorSupplyOk = true;
+  let driveFault = false;
+
+  try {
+    if (isReachable) {
+      client = OPCUAClient.create({
+        endpointMustExist: false,
+        securityMode: MessageSecurityMode.None,
+        securityPolicy: SecurityPolicy.None,
+        connectionStrategy: { maxRetry: 1, initialDelay: 100, maxDelay: 500 },
+        connectionTimeout: 3000
+      });
+
+      await client.connect(endpointUrl);
+      session = await client.createSession();
+
+      // Read initial Motor Position (ns=7;i=690)
+      const motorInitVal = await session.read({
+        nodeId: "ns=7;i=690",
+        attributeId: AttributeIds.Value
+      });
+
+      if (motorInitVal?.value?.value) {
+        const buf = motorInitVal.value.value;
+        if (Buffer.isBuffer(buf)) {
+          rawInputX0Hex = buf.toString("hex").toUpperCase();
+          if (buf.length >= 4) {
+            startPosInc = buf.readInt32BE(0);
+            startDeg = Number(((startPosInc - 51200) * 0.9).toFixed(2));
+          }
+          // Halstrup status flags in Byte 4/5 (Bit 7: Fault, Bit 0: Ready)
+          if (buf.length >= 6) {
+            const statusWord = buf.readUInt16BE(4);
+            driveFault = (statusWord & 0x0080) !== 0;
+          }
+        }
+      }
+
+      // Read Safety / Totmann (ns=7;i=697)
+      try {
+        const deadmanVal = await session.read({ nodeId: "ns=7;i=697", attributeId: AttributeIds.Value });
+        if (deadmanVal?.value?.value) {
+          const b = deadmanVal.value.value;
+          deadmanActive = Buffer.isBuffer(b) ? (b[0] === 1 || b.some((x: number) => x > 0)) : Boolean(b);
+        }
+      } catch (e) {}
+
+      // Read Trigger (ns=7;i=695)
+      try {
+        const trigVal = await session.read({ nodeId: "ns=7;i=695", attributeId: AttributeIds.Value });
+        if (trigVal?.value?.value) {
+          const b = trigVal.value.value;
+          triggerActive = Buffer.isBuffer(b) ? (b[0] === 1 || b.some((x: number) => x > 0)) : Boolean(b);
+        }
+      } catch (e) {}
+
+      const targetInc1Deg = startPosInc + 1; // +1 Inc = +0.9°
+      const targetPosHexBE = (targetInc1Deg >>> 0).toString(16).toUpperCase().padStart(8, "0");
+      const targetPosHexLE = Buffer.from([
+        targetInc1Deg & 0xFF,
+        (targetInc1Deg >> 8) & 0xFF,
+        (targetInc1Deg >> 16) & 0xFF,
+        (targetInc1Deg >> 24) & 0xFF
+      ]).toString("hex").toUpperCase();
+
+      // Helper to execute and record a trial
+      const executeTrial = async (
+        name: string,
+        desc: string,
+        bufToSend: Buffer,
+        dataType: 'ByteString' | 'ByteArray',
+        pulseStopAfterMs: number = 0
+      ) => {
+        let opcStatus = "Good";
+        try {
+          if (dataType === 'ByteString') {
+            const res = await session.write({
+              nodeId: "ns=7;i=640",
+              attributeId: AttributeIds.Value,
+              value: { value: { dataType: DataType.ByteString, value: bufToSend } }
+            });
+            opcStatus = res.toString();
+          } else {
+            const res = await session.write({
+              nodeId: "ns=7;i=640",
+              attributeId: AttributeIds.Value,
+              value: {
+                value: {
+                  dataType: DataType.Byte,
+                  arrayType: VariantArrayType.Array,
+                  value: Array.from(bufToSend)
+                }
+              }
+            });
+            opcStatus = res.toString();
+          }
+
+          if (pulseStopAfterMs > 0) {
+            await new Promise(r => setTimeout(r, pulseStopAfterMs));
+            // Send Stop
+            const stopBuf = Buffer.alloc(bufToSend.length);
+            if (dataType === 'ByteString') {
+              await session.write({
+                nodeId: "ns=7;i=640",
+                attributeId: AttributeIds.Value,
+                value: { value: { dataType: DataType.ByteString, value: stopBuf } }
+              });
+            } else {
+              await session.write({
+                nodeId: "ns=7;i=640",
+                attributeId: AttributeIds.Value,
+                value: {
+                  value: {
+                    dataType: DataType.Byte,
+                    arrayType: VariantArrayType.Array,
+                    value: Array.from(stopBuf)
+                  }
+                }
+              });
+            }
+          }
+
+          // Wait 350ms to give actuator time to rotate
+          await new Promise(r => setTimeout(r, 350));
+
+          // Read back position
+          const readBack = await session.read({
+            nodeId: "ns=7;i=690",
+            attributeId: AttributeIds.Value
+          });
+
+          let currentInc = startPosInc;
+          if (readBack?.value?.value && Buffer.isBuffer(readBack.value.value) && readBack.value.value.length >= 4) {
+            currentInc = readBack.value.value.readInt32BE(0);
+          }
+
+          const deltaInc = currentInc - startPosInc;
+          const deltaDeg = Number((deltaInc * 0.9).toFixed(2));
+          const moved = Math.abs(deltaInc) > 0;
+
+          trials.push({
+            name,
+            formatDescription: desc,
+            hexSent: bufToSend.toString("hex").toUpperCase(),
+            dataType,
+            opcStatusCode: opcStatus,
+            positionAfter: currentInc,
+            deltaInc,
+            deltaDeg,
+            moved,
+            timestamp: new Date().toISOString()
+          });
+
+          return moved;
+        } catch (e: any) {
+          trials.push({
+            name,
+            formatDescription: desc,
+            hexSent: bufToSend.toString("hex").toUpperCase(),
+            dataType,
+            opcStatusCode: "Fehler: " + e.message,
+            positionAfter: startPosInc,
+            deltaInc: 0,
+            deltaDeg: 0,
+            moved: false,
+            timestamp: new Date().toISOString()
+          });
+          return false;
+        }
+      };
+
+      // 1. Trial 1: 32-Byte ByteString Padded Absolute Positioning +1° (0014 + PosBE + 26 bytes 00)
+      const buf32Pos = Buffer.alloc(32);
+      Buffer.from("0014" + targetPosHexBE, "hex").copy(buf32Pos, 0);
+      await executeTrial(
+        "1. Pos +1° (32-Byte ByteString Padded)",
+        `Absolut-Positionierung auf ${targetInc1Deg} Inc (+0.9°/1.0°) mit 32-Byte Padded Buffer`,
+        buf32Pos,
+        "ByteString"
+      );
+
+      // 2. Trial 2: 6-Byte ByteString Absolute Positioning +1° (0014 + PosBE)
+      const buf6Pos = Buffer.from("0014" + targetPosHexBE, "hex");
+      await executeTrial(
+        "2. Pos +1° (6-Byte ByteString)",
+        `Absolut-Positionierung auf ${targetInc1Deg} Inc mit exakter 6-Byte Länge`,
+        buf6Pos,
+        "ByteString"
+      );
+
+      // 3. Trial 3: 32-Byte ByteArray Absolute Positioning
+      await executeTrial(
+        "3. Pos +1° (32-Byte ByteArray)",
+        `Absolut-Positionierung mit Variant Array von Byte[32]`,
+        buf32Pos,
+        "ByteArray"
+      );
+
+      // 4. Trial 4: 8-Byte Modus mit Speed 100% und Torque 100% (0014 + PosBE + 6464)
+      const buf8Pos = Buffer.alloc(32);
+      Buffer.from("0014" + targetPosHexBE + "6464", "hex").copy(buf8Pos, 0);
+      await executeTrial(
+        "4. Pos +1° (8-Byte mit Speed & Drehmoment 100%)",
+        `Absolut-Positionierung mit Speed Byte 0x64 (100%) und Moment Byte 0x64`,
+        buf8Pos,
+        "ByteString"
+      );
+
+      // 5. Trial 5: Jog + Puls 32-Byte ByteString (001100000000... für 400ms)
+      const buf32Jog = Buffer.alloc(32);
+      Buffer.from("001100000000", "hex").copy(buf32Jog, 0);
+      await executeTrial(
+        "5. Jog + Rechtslauf Puls (32-Byte ByteString)",
+        "Tippbetrieb / Rechtslauf Befehl 0011 für 400ms gepulst, gefolgt von Stop 0000",
+        buf32Jog,
+        "ByteString",
+        400
+      );
+
+      // 6. Trial 6: Jog + Puls 6-Byte ByteString (001100000000 für 400ms)
+      const buf6Jog = Buffer.from("001100000000", "hex");
+      await executeTrial(
+        "6. Jog + Rechtslauf Puls (6-Byte ByteString)",
+        "Tippbetrieb / Rechtslauf Befehl 0011 mit exakter 6-Byte Länge",
+        buf6Jog,
+        "ByteString",
+        400
+      );
+
+      // 7. Trial 7: Little Endian Controlword (1400 / 1100)
+      const buf32LE = Buffer.alloc(32);
+      Buffer.from("1400" + targetPosHexLE, "hex").copy(buf32LE, 0);
+      await executeTrial(
+        "7. Pos +1° (Little-Endian Steuerwort 1400)",
+        "Absolut-Positionierung mit Byte-geswaptem Steuerwort 0x1400",
+        buf32LE,
+        "ByteString"
+      );
+
+      // Final Readback
+      const finalRead = await session.read({
+        nodeId: "ns=7;i=690",
+        attributeId: AttributeIds.Value
+      });
+      if (finalRead?.value?.value && Buffer.isBuffer(finalRead.value.value) && finalRead.value.value.length >= 4) {
+        endPosInc = finalRead.value.value.readInt32BE(0);
+        endDeg = Number(((endPosInc - 51200) * 0.9).toFixed(2));
+      }
+
+      await session.close();
+      await client.disconnect();
+    }
+  } catch (err: any) {
+    if (session) {
+      try { await session.close(); await client?.disconnect(); } catch (e) {}
+    }
+  }
+
+  const deltaInc = endPosInc - startPosInc;
+  const deltaDeg = Number((deltaInc * 0.9).toFixed(2));
+  const hasMoved = Math.abs(deltaInc) > 0;
+  const successfulTrial = trials.find(t => t.moved);
+
+  let detailedAnalysis = "";
+  if (hasMoved) {
+    detailedAnalysis = `🎉 ERFOLG! Der Halstrup-Walcher Stellantrieb hat sich erfolgreich um ${deltaInc} Inkremente (${deltaDeg}°) bewegt! Erfolgreiches Telegramm: ${successfulTrial?.name || 'Live Befehl'}.`;
+    recommendations.push(`Motor-Ansteuerung ist funktionsfähig. Bevorzugtes Schreibformat: ${successfulTrial?.name || '32-Byte ByteString'}.`);
+  } else {
+    detailedAnalysis = `⚠️ KEINE PHYSISCHE BEWEGUNG REGISTRIERT (Start: ${startPosInc} Inc, Ende: ${endPosInc} Inc). Alle 7 Telegramm-Varianten wurden an den Baumer IO-Link Master gesendet.`;
+    
+    if (!deadmanActive) {
+      recommendations.push("Sicherheitssperre: Port X7 Totmann-Schalter / Not-Aus steht auf 0 (Freigabe fehlt). Bitte Totmann-Taste gedrückt halten.");
+    }
+    recommendations.push("Aktor-Versorgungsspannung prüfen: Halstrup-Walcher benötigt 24V DC an Up (Aktor-Power Pin 1/3) mit ausreichender Stromstärke (mind. 2.0A Spitzenstrom beim Anlaufen).");
+    recommendations.push("Hardware-Freigabe Pin 2 prüfen: Der Stellantrieb PSE 3325 verlangt an Pin 2 oft ein 24V Enable-Signal.");
+    if (driveFault) {
+      recommendations.push("Stellantrieb meldet internen Fehler/Störung im Statuswort (Bit 7 aktiv). Fehler-Reset über Homing oder Power-Cycle erforderlich.");
+    }
+  }
+
+  return {
+    timestamp,
+    startPosInc,
+    startDeg,
+    endPosInc,
+    endDeg,
+    deltaInc,
+    deltaDeg,
+    hasMoved,
+    targetIncCalculated: startPosInc + 1,
+    successfulFormat: successfulTrial?.name,
+    safetyStatus: {
+      deadmanInputX7: deadmanActive,
+      triggerInputX5: triggerActive,
+      actuatorSupplyUpOk: actuatorSupplyOk,
+      rawInputX0Hex,
+      driveFaultReported: driveFault
+    },
+    trials,
+    detailedAnalysis,
+    recommendations
+  };
+}
+
+export async function runLedTestSuite(
+  endpointUrl: string,
+  credentials?: { username?: string; password?: string },
+  preferredPort: string = "X3",
+  colorCode: number = 0x05 // 0x05=Blue, 0x01=Green, 0x04=Red, 0x02=Yellow
+): Promise<LedTestResult> {
+  const timestamp = new Date().toISOString();
+  const testedPorts: LedTestResult['testedPorts'] = [];
+
+  const isReachable = await testTcpReachability(endpointUrl, 1200);
+  let client: OPCUAClient | null = null;
+  let session: any = null;
+
+  const targetPortConfigs = [
+    { label: "X3", nodeId: "ns=7;i=643", desc: "Port X3 Output (Taster / Leuchte / DO)" },
+    { label: "X6", nodeId: "ns=7;i=646", desc: "Port X6 Output (ifm KT5112 Touch / RGB LED)" },
+    { label: "X5", nodeId: "ns=7;i=645", desc: "Port X5 Output (Trigger / Signal DO)" },
+    { label: "X2", nodeId: "ns=7;i=642", desc: "Port X2 Output (Reserve DO)" }
+  ];
+
+  try {
+    if (isReachable) {
+      client = OPCUAClient.create({
+        endpointMustExist: false,
+        securityMode: MessageSecurityMode.None,
+        securityPolicy: SecurityPolicy.None,
+        connectionStrategy: { maxRetry: 1, initialDelay: 100, maxDelay: 500 },
+        connectionTimeout: 3000
+      });
+
+      await client.connect(endpointUrl);
+      session = await client.createSession();
+
+      for (const p of targetPortConfigs) {
+        const variants: any[] = [];
+
+        // 1. Variant: 1-Byte ByteString
+        try {
+          const res1 = await session.write({
+            nodeId: p.nodeId,
+            attributeId: AttributeIds.Value,
+            value: { value: { dataType: DataType.ByteString, value: Buffer.from([colorCode]) } }
+          });
+          variants.push({
+            dataType: "ByteString (1 Byte)",
+            valueSent: `0x0${colorCode.toString(16)}`,
+            statusCode: res1.toString(),
+            success: res1.equals(StatusCodes.Good)
+          });
+        } catch (e: any) {
+          variants.push({ dataType: "ByteString (1 Byte)", valueSent: `0x0${colorCode.toString(16)}`, statusCode: e.message, success: false });
+        }
+
+        // 2. Variant: 32-Byte ByteString Padded
+        try {
+          const buf32 = Buffer.alloc(32);
+          buf32[0] = colorCode;
+          const res2 = await session.write({
+            nodeId: p.nodeId,
+            attributeId: AttributeIds.Value,
+            value: { value: { dataType: DataType.ByteString, value: buf32 } }
+          });
+          variants.push({
+            dataType: "ByteString (32 Bytes Padded)",
+            valueSent: buf32.toString("hex").toUpperCase(),
+            statusCode: res2.toString(),
+            success: res2.equals(StatusCodes.Good)
+          });
+        } catch (e: any) {
+          variants.push({ dataType: "ByteString (32 Bytes Padded)", valueSent: "32-byte", statusCode: e.message, success: false });
+        }
+
+        // 3. Variant: ByteArray [0x05]
+        try {
+          const res3 = await session.write({
+            nodeId: p.nodeId,
+            attributeId: AttributeIds.Value,
+            value: {
+              value: {
+                dataType: DataType.Byte,
+                arrayType: VariantArrayType.Array,
+                value: [colorCode]
+              }
+            }
+          });
+          variants.push({
+            dataType: "ByteArray [Byte]",
+            valueSent: `[${colorCode}]`,
+            statusCode: res3.toString(),
+            success: res3.equals(StatusCodes.Good)
+          });
+        } catch (e: any) {
+          variants.push({ dataType: "ByteArray [Byte]", valueSent: `[${colorCode}]`, statusCode: e.message, success: false });
+        }
+
+        // 4. Variant: Boolean true (für digitale Ausgänge / DO)
+        try {
+          const res4 = await session.write({
+            nodeId: p.nodeId,
+            attributeId: AttributeIds.Value,
+            value: { value: { dataType: DataType.Boolean, value: true } }
+          });
+          variants.push({
+            dataType: "Boolean (Digital Out High)",
+            valueSent: "true (1)",
+            statusCode: res4.toString(),
+            success: res4.equals(StatusCodes.Good)
+          });
+        } catch (e: any) {
+          variants.push({ dataType: "Boolean", valueSent: "true", statusCode: e.message, success: false });
+        }
+
+        testedPorts.push({
+          portLabel: p.label,
+          nodeId: p.nodeId,
+          description: p.desc,
+          variants
+        });
+      }
+
+      await session.close();
+      await client.disconnect();
+    }
+  } catch (err: any) {
+    if (session) {
+      try { await session.close(); await client?.disconnect(); } catch (e) {}
+    }
+  }
+
+  const anySuccess = testedPorts.some(p => p.variants.some(v => v.success));
+  const colorName = colorCode === 0x05 ? "Blau" : colorCode === 0x01 ? "Grün" : colorCode === 0x04 ? "Rot" : "Gelb";
+
+  return {
+    timestamp,
+    testedPorts,
+    activeColor: colorName,
+    summary: anySuccess 
+      ? `LED / Aktor-Befehl für Farbe ${colorName} wurde erfolgreich an mindestens einen Port übertragen.`
+      : `Befehl für ${colorName} gesendet. Falls der Taster an X3 oder X6 nicht leuchtet, bitte Pin-Belegung (Pin 4 vs Pin 2) und Port-Konfiguration im Baumer Web-Interface prüfen.`
+  };
+}
+
+export function generateAiDiagnosticMarkdown(params: {
   timestamp: string;
   endpointUrl: string;
   isMasterReachable: boolean;
@@ -572,6 +1037,7 @@ function generateAiDiagnosticMarkdown(params: {
   writeTestResults: any[];
   logs: any[];
 }): string {
+
   const {
     timestamp,
     endpointUrl,

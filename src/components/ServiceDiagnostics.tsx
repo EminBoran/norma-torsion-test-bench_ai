@@ -22,9 +22,20 @@ import {
   HardDrive,
   Info,
   Play,
-  Square
+  Square,
+  RotateCw,
+  Flame,
+  Lightbulb,
+  CornerDownRight
 } from 'lucide-react';
-import { MasterDiagnosticReport, ChannelPortScanInfo, SecurityStrategyResult, MasterSystemInfo } from '../types';
+import { 
+  MasterDiagnosticReport, 
+  ChannelPortScanInfo, 
+  SecurityStrategyResult, 
+  MasterSystemInfo,
+  MotorMotionTestResult,
+  LedTestResult
+} from '../types';
 
 interface ServiceDiagnosticsProps {
   onClose?: () => void;
@@ -37,6 +48,13 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
   const [customEndpoint, setCustomEndpoint] = useState('opc.tcp://10.191.199.182:4840');
   const [customUser, setCustomUser] = useState('admin');
   const [customPass, setCustomPass] = useState('admin');
+
+  // Motion 1 Deg & LED Test States
+  const [motor1DegResult, setMotor1DegResult] = useState<MotorMotionTestResult | null>(null);
+  const [running1DegTest, setRunning1DegTest] = useState(false);
+  const [ledTestResult, setLedTestResult] = useState<LedTestResult | null>(null);
+  const [runningLedTest, setRunningLedTest] = useState(false);
+  const [selectedLedColor, setSelectedLedColor] = useState<number>(0x05); // 0x05=Blue
   
   // Custom Tester State
   const [testNodeId, setTestNodeId] = useState('ns=7;i=640');
@@ -45,11 +63,60 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
   const [testResult, setTestResult] = useState<any>(null);
   const [testingWrite, setTestingWrite] = useState(false);
   const [testingRead, setTestingRead] = useState(false);
-  const [activeTab, setActiveTab] = useState<'overview' | 'ports' | 'strategies' | 'tester' | 'report'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'ports' | 'motion' | 'strategies' | 'tester' | 'report'>('motion');
 
   useEffect(() => {
     runScan();
   }, []);
+
+  const handleRunMotor1DegTest = async () => {
+    setRunning1DegTest(true);
+    try {
+      const res = await fetch('/api/diagnostics/motor-1deg-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          endpoint: customEndpoint,
+          username: customUser,
+          password: customPass
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setMotor1DegResult(data);
+      }
+    } catch (e: any) {
+      console.error('1 deg test failed:', e);
+    } finally {
+      setRunning1DegTest(false);
+    }
+  };
+
+  const handleRunLedTest = async (colorCode: number, port: string = "X3") => {
+    setRunningLedTest(true);
+    setSelectedLedColor(colorCode);
+    try {
+      const res = await fetch('/api/diagnostics/led-test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          endpoint: customEndpoint,
+          username: customUser,
+          password: customPass,
+          color: colorCode,
+          port
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setLedTestResult(data);
+      }
+    } catch (e: any) {
+      console.error('LED test failed:', e);
+    } finally {
+      setRunningLedTest(false);
+    }
+  };
 
   const runScan = async () => {
     setLoading(true);
@@ -220,61 +287,391 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
       </div>
 
       {/* Navigation Sub-Tabs */}
-      <div className="flex bg-slate-950 px-4 pt-3 border-b border-slate-800 gap-2 shrink-0">
+      <div className="flex bg-slate-950 px-4 pt-3 border-b border-slate-800 gap-2 shrink-0 overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('motion')}
+          className={`px-4 py-2 border-b-2 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
+            activeTab === 'motion'
+              ? 'border-emerald-500 text-emerald-400 bg-slate-900/60'
+              : 'border-transparent text-slate-400 hover:text-slate-200'
+          }`}
+        >
+          <RotateCw className="w-4 h-4 text-emerald-400" /> 1. 🚀 1° Motor & Aktor Diagnose
+        </button>
         <button
           onClick={() => setActiveTab('overview')}
-          className={`px-4 py-2 border-b-2 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer ${
+          className={`px-4 py-2 border-b-2 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
             activeTab === 'overview'
               ? 'border-blue-500 text-blue-400 bg-slate-900/50'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Layers className="w-4 h-4" /> 1. Master & System
+          <Layers className="w-4 h-4" /> 2. Master & System
         </button>
         <button
           onClick={() => setActiveTab('ports')}
-          className={`px-4 py-2 border-b-2 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer ${
+          className={`px-4 py-2 border-b-2 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
             activeTab === 'ports'
               ? 'border-blue-500 text-blue-400 bg-slate-900/50'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Radio className="w-4 h-4" /> 2. Kanäle X0–X7 ({report?.ports.length || 8})
+          <Radio className="w-4 h-4" /> 3. Kanäle X0–X7 ({report?.ports.length || 8})
         </button>
         <button
           onClick={() => setActiveTab('strategies')}
-          className={`px-4 py-2 border-b-2 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer ${
+          className={`px-4 py-2 border-b-2 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
             activeTab === 'strategies'
               ? 'border-blue-500 text-blue-400 bg-slate-900/50'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <ShieldCheck className="w-4 h-4" /> 3. Verbindungs-Matrix
+          <ShieldCheck className="w-4 h-4" /> 4. Verbindungs-Matrix
         </button>
         <button
           onClick={() => setActiveTab('tester')}
-          className={`px-4 py-2 border-b-2 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer ${
+          className={`px-4 py-2 border-b-2 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
             activeTab === 'tester'
               ? 'border-blue-500 text-blue-400 bg-slate-900/50'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Terminal className="w-4 h-4" /> 4. Manuelles Test-Terminal
+          <Terminal className="w-4 h-4" /> 5. Manuelles Test-Terminal
         </button>
         <button
           onClick={() => setActiveTab('report')}
-          className={`px-4 py-2 border-b-2 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer ${
+          className={`px-4 py-2 border-b-2 font-bold text-xs flex items-center gap-1.5 transition cursor-pointer whitespace-nowrap ${
             activeTab === 'report'
               ? 'border-blue-500 text-blue-400 bg-slate-900/50'
               : 'border-transparent text-slate-400 hover:text-slate-200'
           }`}
         >
-          <Copy className="w-4 h-4 text-emerald-400" /> 5. AI-Prüfbericht (Volltext)
+          <Copy className="w-4 h-4 text-emerald-400" /> 6. AI-Prüfbericht (Volltext)
         </button>
       </div>
 
       {/* Main Content Area */}
       <div className="flex-1 p-5 overflow-y-auto min-h-0">
+
+        {/* TAB: 1° MOTOR & AKTOR MOTION DIAGNOSE */}
+        {activeTab === 'motion' && (
+          <div className="space-y-6">
+            
+            {/* Top Action Header */}
+            <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/40 border border-slate-800 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4 shadow-xl">
+              <div>
+                <h3 className="text-base font-bold text-white flex items-center gap-2">
+                  <RotateCw className="w-5 h-5 text-emerald-400" /> Aktiver 1° Motor-Bewegungstest & Aktor-Inspektion
+                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-medium">
+                    7 Telegramm-Varianten & Live Δ-Tracking
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400 font-mono mt-1">
+                  Sendet systematisch 7 verschiedene Ansteuerungs-Formate (32-Byte Buffer, 6-Byte, ByteArray, Jog-Pulse, Speed/Torque Bytes) an Port X0 (<code className="text-blue-300">ns=7;i=640</code>) und misst die exakte Inkrement-Änderung an <code className="text-emerald-300">ns=7;i=690</code>.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={handleRunMotor1DegTest}
+                  disabled={running1DegTest}
+                  className="px-5 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:bg-slate-800 text-white rounded-xl text-sm font-bold flex items-center gap-2.5 shadow-lg shadow-emerald-950/50 cursor-pointer active:scale-98 transition"
+                >
+                  <Play className={`w-4 h-4 ${running1DegTest ? 'animate-spin text-white' : 'text-emerald-200 fill-emerald-200'}`} />
+                  {running1DegTest ? 'Test läuft (7 Zyklen)...' : '1° Motor-Bewegungstest ausführen'}
+                </button>
+              </div>
+            </div>
+
+            {/* Live Result / Delta Banner */}
+            {motor1DegResult && (
+              <div className="space-y-4">
+                
+                {/* Result Hero Banner */}
+                <div className={`p-4 rounded-xl border flex flex-col md:flex-row items-start md:items-center justify-between gap-4 font-mono shadow-xl ${
+                  motor1DegResult.hasMoved
+                    ? 'bg-emerald-950/60 border-emerald-700/80 text-emerald-200'
+                    : 'bg-amber-950/60 border-amber-700/80 text-amber-200'
+                }`}>
+                  <div className="flex items-start gap-3.5">
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                      motor1DegResult.hasMoved 
+                        ? 'bg-emerald-600/30 border-emerald-500 text-emerald-400' 
+                        : 'bg-amber-600/30 border-amber-500 text-amber-400'
+                    }`}>
+                      {motor1DegResult.hasMoved ? <CheckCircle2 className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
+                    </div>
+                    <div>
+                      <div className="text-sm font-bold flex items-center gap-2">
+                        {motor1DegResult.hasMoved ? '🎉 MOTOR-BEWEGUNG ERFOLGREICH DETEKTIERT!' : '⚠️ KEINE PHYSISCHE BEWEGUNG REGISTRIERT'}
+                        <span className="text-[11px] px-2 py-0.5 rounded bg-slate-900 text-white font-mono">
+                          Δ = {motor1DegResult.deltaInc} Inc ({motor1DegResult.deltaDeg}°)
+                        </span>
+                      </div>
+                      <p className="text-xs mt-1 text-slate-300 font-sans">
+                        {motor1DegResult.detailedAnalysis}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 bg-slate-950/80 p-3 rounded-lg border border-slate-800 shrink-0 text-xs">
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">Start-Position:</span>
+                      <strong className="text-white font-bold">{motor1DegResult.startPosInc} Inc ({motor1DegResult.startDeg}°)</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block text-[10px]">End-Position:</span>
+                      <strong className="text-white font-bold">{motor1DegResult.endPosInc} Inc ({motor1DegResult.endDeg}°)</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Safety & Physical Checklist */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 font-mono text-xs">
+                  
+                  {/* Item 1: Totmann Switch X7 */}
+                  <div className={`p-3 rounded-xl border flex flex-col justify-between ${
+                    motor1DegResult.safetyStatus.deadmanInputX7
+                      ? 'bg-emerald-950/30 border-emerald-800/60 text-emerald-300'
+                      : 'bg-red-950/40 border-red-800/80 text-red-300'
+                  }`}>
+                    <div className="flex justify-between items-center text-[10px] text-slate-400 uppercase">
+                      <span>Port X7: Totmann / Not-Halt</span>
+                      {motor1DegResult.safetyStatus.deadmanInputX7 ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <XCircle className="w-3.5 h-3.5 text-red-400" />}
+                    </div>
+                    <div className="my-1.5 text-sm font-bold">
+                      {motor1DegResult.safetyStatus.deadmanInputX7 ? '✅ Freigabe aktiv (1)' : '❌ Gesperrt (0 / Not-Halt)'}
+                    </div>
+                    <div className="text-[10px] text-slate-400">
+                      {motor1DegResult.safetyStatus.deadmanInputX7 ? 'Sicherheitsschleife geschlossen' : 'Totmann-Taste gedrückt halten!'}
+                    </div>
+                  </div>
+
+                  {/* Item 2: Trigger Port X5 */}
+                  <div className="p-3 rounded-xl border bg-slate-900 border-slate-800 text-slate-300 flex flex-col justify-between">
+                    <div className="flex justify-between items-center text-[10px] text-slate-400 uppercase">
+                      <span>Port X5: Trigger-Signal</span>
+                      <Radio className="w-3.5 h-3.5 text-blue-400" />
+                    </div>
+                    <div className="my-1.5 text-sm font-bold text-blue-400">
+                      {motor1DegResult.safetyStatus.triggerInputX5 ? 'Aktiv (1)' : 'Inaktiv (0)'}
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-mono">Node ns=7;i=695</div>
+                  </div>
+
+                  {/* Item 3: Actuator Power Up */}
+                  <div className="p-3 rounded-xl border bg-slate-900 border-slate-800 text-slate-300 flex flex-col justify-between">
+                    <div className="flex justify-between items-center text-[10px] text-slate-400 uppercase">
+                      <span>Aktor-Spannung Up</span>
+                      <Zap className="w-3.5 h-3.5 text-amber-400" />
+                    </div>
+                    <div className="my-1.5 text-sm font-bold text-amber-400">
+                      24.0 V DC
+                    </div>
+                    <div className="text-[10px] text-slate-400">Spitzenstrom mind. 2.0 A</div>
+                  </div>
+
+                  {/* Item 4: Drive Fault Bit */}
+                  <div className={`p-3 rounded-xl border flex flex-col justify-between ${
+                    !motor1DegResult.safetyStatus.driveFaultReported
+                      ? 'bg-slate-900 border-slate-800 text-slate-300'
+                      : 'bg-red-950/40 border-red-800/80 text-red-300'
+                  }`}>
+                    <div className="flex justify-between items-center text-[10px] text-slate-400 uppercase">
+                      <span>Stellantrieb Fehler-Bit</span>
+                      {!motor1DegResult.safetyStatus.driveFaultReported ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <AlertTriangle className="w-3.5 h-3.5 text-red-400" />}
+                    </div>
+                    <div className="my-1.5 text-sm font-bold">
+                      {!motor1DegResult.safetyStatus.driveFaultReported ? 'Normal (Kein Fehler)' : '⚠️ Störung aktiv (Bit 7)'}
+                    </div>
+                    <div className="text-[10px] text-slate-500 truncate">Raw: {motor1DegResult.safetyStatus.rawInputX0Hex}</div>
+                  </div>
+
+                </div>
+
+                {/* Telegram Trials Table */}
+                <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
+                  <div className="p-3.5 bg-slate-950 border-b border-slate-800 flex justify-between items-center font-mono">
+                    <span className="text-xs font-bold text-white flex items-center gap-2">
+                      <Terminal className="w-4 h-4 text-emerald-400" /> Einzel-Ergebnisse der 7 Telegramm-Varianten
+                    </span>
+                    <span className="text-[11px] text-slate-400">Halstrup-Walcher PSE 3325</span>
+                  </div>
+
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="bg-slate-950/80 text-slate-400 uppercase tracking-wider border-b border-slate-800">
+                      <tr>
+                        <th className="p-3">Test / Telegramm-Format</th>
+                        <th className="p-3">Datentyp</th>
+                        <th className="p-3">Gesendeter Hex-Payload</th>
+                        <th className="p-3">OPC UA Status</th>
+                        <th className="p-3">Position danach</th>
+                        <th className="p-3">Δ Bewegung</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60 text-slate-200">
+                      {motor1DegResult.trials.map((t, idx) => (
+                        <tr key={idx} className={`hover:bg-slate-800/40 transition ${t.moved ? 'bg-emerald-950/20' : ''}`}>
+                          <td className="p-3 font-bold text-white">
+                            <div className="flex items-center gap-1.5">
+                              {t.moved ? <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" /> : <CornerDownRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />}
+                              <span>{t.name}</span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-normal mt-0.5">{t.formatDescription}</div>
+                          </td>
+                          <td className="p-3 text-blue-400">{t.dataType}</td>
+                          <td className="p-3">
+                            <code className="bg-slate-950 px-2 py-0.5 rounded text-amber-300 text-[11px] border border-slate-800 block max-w-xs truncate">
+                              {t.hexSent}
+                            </code>
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              t.opcStatusCode.includes('Good') 
+                                ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' 
+                                : 'bg-red-950 text-red-400 border border-red-800'
+                            }`}>
+                              {t.opcStatusCode}
+                            </span>
+                          </td>
+                          <td className="p-3 font-bold text-slate-300">
+                            {t.positionAfter} Inc
+                          </td>
+                          <td className="p-3 font-bold">
+                            {t.moved ? (
+                              <span className="text-emerald-400 font-bold">+{t.deltaInc} Inc ({t.deltaDeg}°)</span>
+                            ) : (
+                              <span className="text-slate-500 font-normal">0 Inc</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* Recommendations Box */}
+                {motor1DegResult.recommendations.length > 0 && (
+                  <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2 font-mono text-xs">
+                    <div className="text-white font-bold flex items-center gap-2">
+                      <Lightbulb className="w-4 h-4 text-amber-400" /> Diagnose-Hinweise für Vor-Ort-Inbetriebnahme:
+                    </div>
+                    <ul className="space-y-1.5 text-slate-300 pl-2">
+                      {motor1DegResult.recommendations.map((rec, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="text-amber-400 font-bold">•</span>
+                          <span>{rec}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+              </div>
+            )}
+
+            {/* SEPARATE SECTION: TASTER & LED AKTOR DIAGNOSE (X3 / X5 / X6) */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-5 shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                    <Lightbulb className="w-4 h-4 text-amber-400" /> Taster- & LED-Aktor Diagnose (Port X3, X5 & X6)
+                  </h3>
+                  <p className="text-xs text-slate-400 font-mono">
+                    Prüfung der Signalleuchten und Taster-Beleuchtung (ifm KT5112 Touch Sensor / RGB LED auf Port X3 / X6).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-mono">Farbe wählen:</span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleRunLedTest(0x05, "X3")}
+                      disabled={runningLedTest}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold font-mono cursor-pointer transition active:scale-98"
+                    >
+                      🔵 Blau
+                    </button>
+                    <button
+                      onClick={() => handleRunLedTest(0x01, "X3")}
+                      disabled={runningLedTest}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold font-mono cursor-pointer transition active:scale-98"
+                    >
+                      🟢 Grün
+                    </button>
+                    <button
+                      onClick={() => handleRunLedTest(0x04, "X3")}
+                      disabled={runningLedTest}
+                      className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold font-mono cursor-pointer transition active:scale-98"
+                    >
+                      🔴 Rot
+                    </button>
+                    <button
+                      onClick={() => handleRunLedTest(0x02, "X3")}
+                      disabled={runningLedTest}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold font-mono cursor-pointer transition active:scale-98"
+                    >
+                      🟡 Gelb
+                    </button>
+                    <button
+                      onClick={() => handleRunLedTest(0x00, "X3")}
+                      disabled={runningLedTest}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-bold font-mono cursor-pointer transition active:scale-98"
+                    >
+                      ⚪ Aus (0x00)
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* LED Test Results Grid */}
+              {ledTestResult && (
+                <div className="space-y-3 font-mono text-xs">
+                  <div className="p-3 bg-slate-950 border border-slate-800 rounded-lg flex items-center justify-between">
+                    <span className="text-slate-300">Test-Ergebnis ({ledTestResult.activeColor}):</span>
+                    <span className="text-emerald-400 font-bold">{ledTestResult.summary}</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {ledTestResult.testedPorts.map((p, idx) => (
+                      <div key={idx} className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2">
+                        <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                          <span className="font-bold text-white flex items-center gap-1.5">
+                            <span className="px-2 py-0.5 rounded bg-blue-950 text-blue-400 font-mono text-[10px]">{p.portLabel}</span>
+                            {p.description}
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-mono">{p.nodeId}</span>
+                        </div>
+
+                        <div className="space-y-1.5 pt-1">
+                          {p.variants.map((v, vIdx) => (
+                            <div key={vIdx} className="flex justify-between items-center text-[11px]">
+                              <span className="text-slate-400">{v.dataType}:</span>
+                              <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${
+                                v.success 
+                                  ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' 
+                                  : 'bg-slate-900 text-slate-400 border border-slate-800'
+                              }`}>
+                                {v.statusCode}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="bg-blue-950/30 border border-blue-900/50 rounded-xl p-3.5 text-xs text-blue-200">
+                    <strong className="text-white block mb-1">Hinweis zur Taster-Verdrahtung:</strong>
+                    Der ifm KT5112 Taster / Leuchtmelder kann je nach IO-Link Master Port-Parametrierung als IO-Link Device (Port X6) oder als Standard I/O (Pin 4 Digital Output an Port X3) betrieben werden. Unsere Software sendet simultan an alle konfigurierten Ausgangs-Nodes (<code className="text-white">ns=7;i=643</code>, <code className="text-white">ns=7;i=646</code>, <code className="text-white">ns=7;i=645</code>).
+                  </div>
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
+
         
         {/* TAB 1: MASTER & SYSTEM OVERVIEW */}
         {activeTab === 'overview' && report && (

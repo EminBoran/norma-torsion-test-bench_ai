@@ -120,6 +120,59 @@ export interface SecurityStrategyResult {
   statusCode?: string;
 }
 
+export interface MotorMotionTrial {
+  name: string;
+  formatDescription: string;
+  hexSent: string;
+  dataType: string;
+  opcStatusCode: string;
+  positionAfter: number;
+  deltaInc: number;
+  deltaDeg: number;
+  moved: boolean;
+  timestamp: string;
+}
+
+export interface MotorMotionTestResult {
+  timestamp: string;
+  startPosInc: number;
+  startDeg: number;
+  endPosInc: number;
+  endDeg: number;
+  deltaInc: number;
+  deltaDeg: number;
+  hasMoved: boolean;
+  targetIncCalculated: number;
+  successfulFormat?: string;
+  safetyStatus: {
+    deadmanInputX7: boolean;
+    triggerInputX5: boolean;
+    actuatorSupplyUpOk: boolean;
+    rawInputX0Hex: string;
+    driveFaultReported: boolean;
+  };
+  trials: MotorMotionTrial[];
+  detailedAnalysis: string;
+  recommendations: string[];
+}
+
+export interface LedTestResult {
+  timestamp: string;
+  testedPorts: {
+    portLabel: string;
+    nodeId: string;
+    description: string;
+    variants: {
+      dataType: string;
+      valueSent: string;
+      statusCode: string;
+      success: boolean;
+    }[];
+  }[];
+  activeColor: string;
+  summary: string;
+}
+
 export interface MasterDiagnosticReport {
   timestamp: string;
   targetEndpoint: string;
@@ -132,5 +185,8 @@ export interface MasterDiagnosticReport {
   logs: { time: string; level: 'info' | 'warn' | 'error' | 'success'; message: string; data?: any }[];
   readTestResults: { nodeId: string; name: string; success: boolean; rawHex?: string; value?: any; error?: string }[];
   writeTestResults: { nodeId: string; name: string; success: boolean; dataTypeUsed: string; responseCode?: string; error?: string }[];
+  lastMotorMotionTest?: MotorMotionTestResult;
+  lastLedTest?: LedTestResult;
   aiSummaryReport: string;
 }
+
