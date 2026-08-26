@@ -18,7 +18,9 @@ import {
   Zap,
   Save,
   Trash2,
-  RefreshCw
+  RefreshCw,
+  Settings,
+  Cpu
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -30,6 +32,7 @@ import {
   ResponsiveContainer, 
   ReferenceLine 
 } from 'recharts';
+import ServiceDiagnostics from './components/ServiceDiagnostics';
 
 interface TestBenchStatus {
   connected: boolean;
@@ -100,7 +103,7 @@ export default function App() {
     }
   });
 
-  const [activeTab, setActiveTab] = useState<'control' | 'curve' | 'records' | 'settings'>('control');
+  const [activeTab, setActiveTab] = useState<'control' | 'curve' | 'records' | 'settings' | 'diagnostics'>('control');
   const [records, setRecords] = useState<TestRecord[]>([]);
   const [selectedRecord, setSelectedRecord] = useState<TestRecord | null>(null);
   const [tempSettings, setTempSettings] = useState<any>(status.settings);
@@ -240,7 +243,7 @@ export default function App() {
           </div>
 
           {/* Navigation Tabs */}
-          <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-800 space-x-1">
+          <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-800 space-x-1 items-center">
             <button
               onClick={() => setActiveTab('control')}
               className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${activeTab === 'control' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
@@ -264,6 +267,21 @@ export default function App() {
               className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${activeTab === 'settings' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
             >
               Parameter
+            </button>
+
+            {/* Gear Icon - Service Diagnose Page */}
+            <div className="h-4 w-px bg-slate-800 mx-1" />
+            <button
+              onClick={() => setActiveTab('diagnostics')}
+              className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                activeTab === 'diagnostics' 
+                  ? 'bg-amber-600 text-white shadow-lg border border-amber-400' 
+                  : 'bg-amber-950/40 text-amber-300 hover:bg-amber-900/50 border border-amber-500/40'
+              }`}
+              title="Baumer IO-Link Master Service & Diagnose (X0-X7)"
+            >
+              <Settings className={`w-3.5 h-3.5 text-amber-400 ${activeTab === 'diagnostics' ? 'animate-spin-slow' : ''}`} />
+              <span>Service Diagnose</span>
             </button>
           </div>
         </div>
@@ -759,6 +777,11 @@ export default function App() {
                 </button>
               </div>
             </form>
+          )}
+
+          {/* TAB 5: SERVICE DIAGNOSTICS */}
+          {activeTab === 'diagnostics' && (
+            <ServiceDiagnostics />
           )}
 
         </div>

@@ -3,11 +3,23 @@ import http from "http";
 import express from "express";
 import path from "path";
 import cors from "cors";
-import { OPCUAClient, AttributeIds, ClientSubscription, ClientMonitoredItem, TimestampsToReturn, DataType, MessageSecurityMode, SecurityPolicy } from "node-opcua";
+import { 
+  OPCUAClient, 
+  AttributeIds, 
+  ClientSubscription, 
+  ClientMonitoredItem, 
+  TimestampsToReturn, 
+  DataType, 
+  VariantArrayType,
+  MessageSecurityMode, 
+  SecurityPolicy,
+  StatusCodes 
+} from "node-opcua";
 import { OPCUACertificateManager } from "node-opcua-certificate-manager";
 import { Server } from "socket.io";
 import * as dotenv from "dotenv";
 import { createRequire } from "module";
+import { runComprehensiveMasterScan } from "./server_diagnostics";
 
 dotenv.config();
 
@@ -632,6 +644,158 @@ app.get("/api/records", async (req, res) => {
     })));
   } catch (err: any) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------
+// Diagnostic & IO-Link Scan Routes
+// ----------------------------------------------------
+app.post("/api/diagnostics/scan", async (req, res) => {
+  try {
+    const target = req.body.endpoint || endpointUrl;
+    const creds = {
+      username: req.body.username || process.env.OPC_USERNAME || "admin",
+      password: req.body.password || process.env.OPC_PASSWORD || "admin"
+    };
+    const report = await runComprehensiveMasterScan(target, creds);
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: "Diagnosescan fehlgeschlagen: " + err.message });
+  }
+});
+
+app.get("/api/diagnostics/scan", async (req, res) => {
+  try {
+    const report = await runComprehensiveMasterScan(endpointUrl);
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: "Diagnosescan fehlgeschlagen: " + err.message });
+  }
+});
+
+app.post("/api/diagnostics/custom-write", async (req, res) => {
+  const { nodeId, dataType, hexValue, numValue } = req.body;
+  if (!nodeId) return res.status(400).json({ error: "nodeId erforderlich" });
+
+  try {
+    let buf: Buffer = Buffer.from([]);
+    if (hexValue) {
+      buf = Buffer.from(hexValue.replace(/\s+/g, ""), "hex");
+    } else if (typeof numValue === "number") {
+      buf = Buffer.alloc(4);
+      buf.writeInt32BE(numValue, 0);
+    }
+
+    if (opcSession && isConnected) {
+      let targetDataType = DataType.ByteString;
+      let targetArrayType = VariantArrayType.Scalar;
+      let targetValue: any = buf;
+
+      if (dataType === "ByteArray") {
+        targetDataType = DataType.Byte;
+        targetArrayType = VariantArrayType.Array;
+        targetValue = Array.from(buf);
+      } else if (dataType === "Int16") {
+        targetDataType = DataType.Int16;
+        targetValue = typeof numValue === "number" ? numValue : buf.readInt16BE(0);
+      } else if (dataType === "Int32") {
+        targetDataType = DataType.Int32;
+        targetValue = typeof numValue === "number" ? numValue : buf.readInt32BE(0);
+      } else if (dataType === "Boolean") {
+        targetDataType = DataType.Boolean;
+        targetValue = numValue === 1 || hexValue === "01" || hexValue === "1";
+      }
+
+      const result = await opcSession.write({
+        nodeId: nodeId,
+        attributeId: AttributeIds.Value,
+        value: {
+          value: {
+            dataType: targetDataType,
+            arrayType: targetArrayType,
+            value: targetValue
+          }
+        }
+      });
+
+      return res.json({
+        success: result.equals(StatusCodes.Good),
+        statusCode: result.toString(),
+        nodeId,
+        dataType: dataType || "ByteString",
+        hexWritten: buf.toString("hex").toUpperCase()
+      });
+    } else {
+      return res.json({
+        success: false,
+        statusCode: "BadNotConnected",
+        message: "Keine aktive OPC UA Session verbunden. Bitte Diagnosescan oder Reconnect ausführen.",
+        nodeId,
+        hexWritten: buf.toString("hex").toUpperCase()
+      });
+    }
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
+
+app.post("/api/diagnostics/custom-read", async (req, res) => {
+  const { nodeId } = req.body;
+  if (!nodeId) return res.status(400).json({ error: "nodeId erforderlich" });
+
+  try {
+    if (opcSession && isConnected) {
+      const dataVal = await opcSession.read({
+        nodeId: nodeId,
+        attributeId: AttributeIds.Value
+      });
+
+      let hex = "";
+      const val = dataVal.value?.value;
+      if (Buffer.isBuffer(val)) hex = val.toString("hex").toUpperCase();
+      else if (Array.isArray(val)) hex = Buffer.from(val).toString("hex").toUpperCase();
+      else if (val !== undefined) hex = String(val);
+
+      return res.json({
+        success: dataVal.statusCode.equals(StatusCodes.Good),
+        statusCode: dataVal.statusCode.toString(),
+        value: val,
+        rawHex: hex,
+        dataType: dataVal.value?.dataType !== undefined ? DataType[dataVal.value.dataType] : "Unknown"
+      });
+    } else {
+      return res.json({
+        success: false,
+        statusCode: "BadNotConnected",
+        message: "Keine aktive OPC UA Session vorhanden."
+      });
+    }
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post("/api/diagnostics/reconnect", async (req, res) => {
+  const { endpoint, username, password } = req.body;
+  if (username) process.env.OPC_USERNAME = username;
+  if (password) process.env.OPC_PASSWORD = password;
+  if (endpoint) process.env.BAUMER_OPCUA_ENDPOINT = endpoint;
+
+  try {
+    if (opcSession) {
+      try { await opcSession.close(); } catch(e) {}
+    }
+    if (opcClient) {
+      try { await opcClient.disconnect(); } catch(e) {}
+    }
+    isConnected = false;
+    setupOpcUa().catch(console.error);
+    res.json({ success: true, message: "Verbindungsaufbau neu gestartet" });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
