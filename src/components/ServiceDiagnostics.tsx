@@ -48,9 +48,11 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
   const [customEndpoint, setCustomEndpoint] = useState('opc.tcp://10.191.199.182:4840');
   const [customUser, setCustomUser] = useState('admin');
   const [customPass, setCustomPass] = useState('admin');
+  const [forceNodeId, setForceNodeId] = useState('');
 
   // Motion 1 Deg & LED Test States
   const [motor1DegResult, setMotor1DegResult] = useState<MotorMotionTestResult | null>(null);
+  const [motorTestError, setMotorTestError] = useState<string | null>(null);
   const [running1DegTest, setRunning1DegTest] = useState(false);
   const [ledTestResult, setLedTestResult] = useState<LedTestResult | null>(null);
   const [runningLedTest, setRunningLedTest] = useState(false);
@@ -71,6 +73,8 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
 
   const handleRunMotor1DegTest = async () => {
     setRunning1DegTest(true);
+    setMotorTestError(null);
+    setMotor1DegResult(null);
     try {
       const res = await fetch('/api/diagnostics/motor-1deg-test', {
         method: 'POST',
@@ -78,15 +82,19 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
         body: JSON.stringify({
           endpoint: customEndpoint,
           username: customUser,
-          password: customPass
+          password: customPass,
+          forceNodeId: forceNodeId
         })
       });
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
         setMotor1DegResult(data);
+      } else {
+        setMotorTestError(data.error || 'Unbekannter Fehler');
       }
     } catch (e: any) {
       console.error('1 deg test failed:', e);
+      setMotorTestError(e.message);
     } finally {
       setRunning1DegTest(false);
     }
@@ -359,29 +367,51 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
             
             {/* Top Action Header */}
             <div className="bg-gradient-to-r from-slate-900 via-slate-900 to-indigo-950/40 border border-slate-800 rounded-xl p-5 flex flex-wrap items-center justify-between gap-4 shadow-xl">
-              <div>
-                <h3 className="text-base font-bold text-white flex items-center gap-2">
-                  <RotateCw className="w-5 h-5 text-emerald-400" /> Aktiver 1° Motor-Bewegungstest & Aktor-Inspektion
-                  <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-medium">
-                    7 Telegramm-Varianten & Live Δ-Tracking
-                  </span>
-                </h3>
-                <p className="text-xs text-slate-400 font-mono mt-1">
-                  Sendet systematisch 7 verschiedene Ansteuerungs-Formate (32-Byte Buffer, 6-Byte, ByteArray, Jog-Pulse, Speed/Torque Bytes) an Port X0 (<code className="text-blue-300">ns=7;i=640</code>) und misst die exakte Inkrement-Änderung an <code className="text-emerald-300">ns=7;i=690</code>.
-                </p>
-              </div>
+              <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 w-full">
+                <div>
+                  <h3 className="text-base font-bold text-white flex items-center gap-2">
+                    <RotateCw className="w-5 h-5 text-emerald-400" /> Aktiver 1° Motor-Bewegungstest & Aktor-Inspektion
+                    <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-medium">
+                      7 Telegramm-Varianten & Live Δ-Tracking
+                    </span>
+                  </h3>
+                  <p className="text-xs text-slate-400 font-mono mt-1">
+                    Sendet systematisch 7 verschiedene Ansteuerungs-Formate (32-Byte Buffer, 6-Byte, ByteArray, Jog-Pulse, Speed/Torque Bytes) an Port X0 (<code className="text-blue-300">ns=7;i=640</code>) und misst die exakte Inkrement-Änderung an <code className="text-emerald-300">ns=7;i=690</code>.
+                  </p>
+                </div>
 
-              <div className="flex items-center gap-3">
-                <button
-                  onClick={handleRunMotor1DegTest}
-                  disabled={running1DegTest}
-                  className="px-5 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:bg-slate-800 text-white rounded-xl text-sm font-bold flex items-center gap-2.5 shadow-lg shadow-emerald-950/50 cursor-pointer active:scale-98 transition"
-                >
-                  <Play className={`w-4 h-4 ${running1DegTest ? 'animate-spin text-white' : 'text-emerald-200 fill-emerald-200'}`} />
-                  {running1DegTest ? 'Test läuft (7 Zyklen)...' : '1° Motor-Bewegungstest ausführen'}
-                </button>
+                <div className="flex flex-col gap-2 shrink-0">
+                  <div className="flex items-center justify-end gap-2 text-xs">
+                    <span className="text-slate-400">Force ID (optional):</span>
+                    <input
+                      type="text"
+                      placeholder="z.B. ns=7;i=641"
+                      value={forceNodeId}
+                      onChange={(e) => setForceNodeId(e.target.value)}
+                      className="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-amber-400 w-32 font-mono placeholder:text-slate-600 focus:border-amber-500 focus:outline-none"
+                    />
+                  </div>
+                  <button
+                    onClick={handleRunMotor1DegTest}
+                    disabled={running1DegTest}
+                    className="px-5 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:bg-slate-800 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-950/50 cursor-pointer active:scale-98 transition"
+                  >
+                    <Play className={`w-4 h-4 ${running1DegTest ? 'animate-spin text-white' : 'text-emerald-200 fill-emerald-200'}`} />
+                    {running1DegTest ? 'Test läuft...' : '1° Motor-Bewegungstest ausführen'}
+                  </button>
+                </div>
               </div>
             </div>
+
+            {motorTestError && (
+              <div className="p-4 bg-red-950/60 border border-red-700 text-red-200 rounded-xl font-mono text-sm flex items-start gap-3 shadow-xl">
+                <AlertTriangle className="w-5 h-5 shrink-0 text-red-500 mt-0.5" />
+                <div>
+                  <div className="font-bold text-red-400 mb-1">Fehler beim Ausführen des Bewegungstests!</div>
+                  <div className="whitespace-pre-wrap">{motorTestError}</div>
+                </div>
+              </div>
+            )}
 
             {/* Live Result / Delta Banner */}
             {motor1DegResult && (
@@ -570,15 +600,15 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
               </div>
             )}
 
-            {/* SEPARATE SECTION: TASTER & LED AKTOR DIAGNOSE (X3 / X5 / X6) */}
+            {/* SEPARATE SECTION: TASTER & LED AKTOR DIAGNOSE (X3 FARBANZEIGE & X5/X6 DI) */}
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-5 shadow-xl">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
                 <div>
                   <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                    <Lightbulb className="w-4 h-4 text-amber-400" /> Taster- & LED-Aktor Diagnose (Port X3, X5 & X6)
+                    <Lightbulb className="w-4 h-4 text-amber-400" /> Taster- & LED-Aktor Diagnose (Port X3 Farbanzeige)
                   </h3>
                   <p className="text-xs text-slate-400 font-mono">
-                    Prüfung der Signalleuchten und Taster-Beleuchtung (ifm KT5112 Touch Sensor / RGB LED auf Port X3 / X6).
+                    Prüfung der IO-Link Signalleuchte / Farb-LED auf Port X3 (NodeID: <code className="text-blue-400 font-bold">ns=7;i=643</code>).
                   </p>
                 </div>
 
@@ -662,8 +692,12 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
                   </div>
 
                   <div className="bg-blue-950/30 border border-blue-900/50 rounded-xl p-3.5 text-xs text-blue-200">
-                    <strong className="text-white block mb-1">Hinweis zur Taster-Verdrahtung:</strong>
-                    Der ifm KT5112 Taster / Leuchtmelder kann je nach IO-Link Master Port-Parametrierung als IO-Link Device (Port X6) oder als Standard I/O (Pin 4 Digital Output an Port X3) betrieben werden. Unsere Software sendet simultan an alle konfigurierten Ausgangs-Nodes (<code className="text-white">ns=7;i=643</code>, <code className="text-white">ns=7;i=646</code>, <code className="text-white">ns=7;i=645</code>).
+                    <strong className="text-white block mb-1">Hinweis zur Kanal- & Port-Belegung:</strong>
+                    <ul className="list-disc pl-4 space-y-1 text-slate-300">
+                      <li><strong>Port X3:</strong> IO-Link Farbmodul / LED-Aktor (<code className="text-white">ns=7;i=643</code>). Farbcodes: 0x05 (Blau), 0x01 (Grün), 0x04 (Rot), 0x02 (Gelb), 0x00 (Aus).</li>
+                      <li><strong>Port X5:</strong> Digitaler Eingang (DI) — Hardware-Taster, der gedrückt gehalten wird (<code className="text-white">ns=7;i=695</code>).</li>
+                      <li><strong>Port X6:</strong> Digitaler Eingang (DI) — Positionsabfrage Endlage unten / nicht unten (<code className="text-white">ns=7;i=696</code>).</li>
+                    </ul>
                   </div>
                 </div>
               )}
@@ -1019,11 +1053,11 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
                     <div className="text-[10px] text-slate-500">ns=7;i=640 | 000000000000</div>
                   </button>
                   <button
-                    onClick={() => applyPreset('ns=7;i=646', 'ByteString', '05')}
+                    onClick={() => applyPreset('ns=7;i=643', 'ByteString', '05')}
                     className="p-2 bg-slate-950 hover:bg-slate-800 border border-slate-800 rounded text-left text-xs font-mono cursor-pointer"
                   >
-                    <div className="font-bold text-indigo-400">LED: Blau (Bereit)</div>
-                    <div className="text-[10px] text-slate-500">ns=7;i=646 | 0x05</div>
+                    <div className="font-bold text-indigo-400">LED: Blau (X3 Farbanzeige)</div>
+                    <div className="text-[10px] text-slate-500">ns=7;i=643 | 0x05</div>
                   </button>
                 </div>
               </div>

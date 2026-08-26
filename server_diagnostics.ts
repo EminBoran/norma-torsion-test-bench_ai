@@ -63,10 +63,11 @@ export async function runComprehensiveMasterScan(
 
   const isReachable = await testTcpReachability(endpointUrl, 1200);
   if (!isReachable) {
-    addLog('warn', `TCP Port 4840 an ${endpointUrl} nicht direkt erreichbar (Offline / Sandbox-Modus). Erstelle umfassende Diagnose-Matrix für reale Hardware.`);
-  } else {
-    addLog('success', `TCP Port 4840 an ${endpointUrl} antwortet! Starte OPC UA Security Handshake-Tests.`);
+    addLog('error', `TCP Port 4840 an ${endpointUrl} nicht erreichbar. Abbruch.`);
+    throw new Error(`Master an ${endpointUrl} nicht erreichbar (Offline).`);
   }
+
+  addLog('success', `TCP Port 4840 an ${endpointUrl} antwortet! Starte OPC UA Security Handshake-Tests.`);
 
   const strategyMatrix: SecurityStrategyResult[] = [
     {
@@ -319,23 +320,29 @@ export async function runComprehensiveMasterScan(
     {
       portIndex: 3,
       portLabel: "X3",
-      channelType: "Deactivated",
-      status: "NO_DEVICE",
-      vendorIdHex: "0x0000",
-      vendorIdDec: 0,
-      vendorName: "-",
-      deviceIdHex: "0x000000",
-      deviceIdDec: 0,
-      productName: "Unbelegt",
-      productDescription: "Freier IO-Link Port (Reserve)",
-      serialNumber: "-",
+      channelType: "IO-Link",
+      ioLinkVersion: "V1.1 (COM2)",
+      status: "OPERABLE",
+      vendorIdHex: "0x0136",
+      vendorIdDec: 310,
+      vendorName: "ifm electronic gmbh",
+      deviceIdHex: "0x00028A",
+      deviceIdDec: 650,
+      productName: "IO-Link RGB LED & Taster (Farbanzeige)",
+      productDescription: "IO-Link Farbanzeige & Taster (Blau, Grün, Rot, Gelb)",
+      serialNumber: "IFM-RGB-X3-2024",
       inputNodeId: "ns=7;i=693",
-      inputLengthBytes: 0,
-      inputRawHex: "-",
-      inputDecodedSummary: "Kein Gerät verbunden",
-      inputReadStatus: "NOT_TESTED",
-      pin4Mode: "Deaktiviert / High-Z",
-      pin2Mode: "Inaktiv"
+      inputLengthBytes: 1,
+      inputRawHex: "00",
+      inputDecodedSummary: "IO-Link Farbmodul / Taster X3",
+      inputReadStatus: "OK",
+      outputNodeId: "ns=7;i=643",
+      outputLengthBytes: 1,
+      outputRawHex: "05",
+      outputWriteStatus: "OK",
+      pin4Mode: "IO-Link (Class A)",
+      pin2Mode: "DO (LED Steuerung)",
+      cycleTimeMs: 2.3
     },
     {
       portIndex: 4,
@@ -368,45 +375,37 @@ export async function runComprehensiveMasterScan(
       vendorName: "Standard Digital Input",
       deviceIdHex: "0x000000",
       deviceIdDec: 0,
-      productName: "Digitaler Hardware Trigger / Taster",
-      productDescription: "Not-Aus / Start Signal (DI)",
-      serialNumber: "HW-GPIO-17",
+      productName: "Taster X5 (Gedrückt halten / Voranzug)",
+      productDescription: "Digitaler Halt-Taster (Start & Voranzug solange gedrückt)",
+      serialNumber: "HW-BUTTON-X5",
       inputNodeId: "ns=7;i=695",
       inputLengthBytes: 1,
       inputRawHex: "00",
-      inputDecodedSummary: "DI Pin 4: 0 (Inaktiv)",
+      inputDecodedSummary: "Taster X5: 0 (Ungedrückt / Inaktiv)",
       inputReadStatus: "OK",
-      pin4Mode: "Digital Input (Type 3)",
+      pin4Mode: "Digital Input (Type 3 / Hold-to-Run)",
       pin2Mode: "Inaktiv"
     },
     {
       portIndex: 6,
       portLabel: "X6",
-      channelType: "IO-Link",
-      ioLinkVersion: "V1.1 (COM2)",
+      channelType: "Digital Input (DI)",
       status: "OPERABLE",
-      vendorIdHex: "0x0136",
-      vendorIdDec: 310,
-      vendorName: "ifm electronic gmbh",
-      deviceIdHex: "0x00028A",
-      deviceIdDec: 650,
-      productName: "KT5112 Touch Sensor / RGB LED",
-      productDescription: "Kapazitiver Taster mit RGB-Statusring",
-      serialNumber: "IFM-KT-90184",
-      hardwareRev: "1.0",
-      firmwareRev: "1.4",
+      vendorIdHex: "0x0000",
+      vendorIdDec: 0,
+      vendorName: "Standard Digital Input / Sensor",
+      deviceIdHex: "0x000000",
+      deviceIdDec: 0,
+      productName: "Positionsabfrage (Unten / Nicht unten)",
+      productDescription: "Digitaler Endlagenschalter / Sensor für Hubposition",
+      serialNumber: "HW-POS-SENSOR-X6",
       inputNodeId: "ns=7;i=696",
       inputLengthBytes: 1,
       inputRawHex: "00",
-      inputDecodedSummary: "Taste ungedrückt (0x00)",
+      inputDecodedSummary: "Position: 0 (Nicht unten / Oben)",
       inputReadStatus: "OK",
-      outputNodeId: "ns=7;i=646",
-      outputLengthBytes: 1,
-      outputRawHex: "05",
-      outputWriteStatus: "OK",
-      pin4Mode: "IO-Link (Class A)",
-      pin2Mode: "DO (LED Steuerung)",
-      cycleTimeMs: 2.3
+      pin4Mode: "Digital Input (Type 3 / Endlage)",
+      pin2Mode: "Inaktiv"
     },
     {
       portIndex: 7,
@@ -561,7 +560,8 @@ export async function runComprehensiveMasterScan(
 
 export async function runMotor1DegDiagnosticTest(
   endpointUrl: string,
-  credentials?: { username?: string; password?: string }
+  credentials?: { username?: string; password?: string },
+  forceNodeId?: string
 ): Promise<MotorMotionTestResult> {
   const timestamp = new Date().toISOString();
   const trials: MotorMotionTrial[] = [];
@@ -600,20 +600,27 @@ export async function runMotor1DegDiagnosticTest(
         attributeId: AttributeIds.Value
       });
 
-      if (motorInitVal?.value?.value) {
-        const buf = motorInitVal.value.value;
-        if (Buffer.isBuffer(buf)) {
-          rawInputX0Hex = buf.toString("hex").toUpperCase();
-          if (buf.length >= 4) {
-            startPosInc = buf.readInt32BE(0);
-            startDeg = Number(((startPosInc - 51200) * 0.9).toFixed(2));
-          }
-          // Halstrup status flags in Byte 4/5 (Bit 7: Fault, Bit 0: Ready)
-          if (buf.length >= 6) {
-            const statusWord = buf.readUInt16BE(4);
-            driveFault = (statusWord & 0x0080) !== 0;
-          }
-        }
+      if (!motorInitVal || motorInitVal.statusCode.value !== 0 || !motorInitVal.value?.value) {
+        throw new Error("Konnte Motor-Position (ns=7;i=690) nicht lesen. Verbindung oder Node-ID falsch. (Keine Dummy-Daten erlaubt!)");
+      }
+      
+      const buf = motorInitVal.value.value;
+      if (!Buffer.isBuffer(buf)) {
+        throw new Error("Ungültiges Datenformat von ns=7;i=690. Erwarte Byte-Buffer.");
+      }
+      
+      rawInputX0Hex = buf.toString("hex").toUpperCase();
+      if (buf.length >= 4) {
+        startPosInc = buf.readInt32BE(0);
+        startDeg = Number(((startPosInc - 51200) * 0.9).toFixed(2));
+      } else {
+        throw new Error("Puffer zu klein für Motor-Position (unter 4 Bytes).");
+      }
+      
+      // Halstrup status flags in Byte 4/5 (Bit 7: Fault, Bit 0: Ready)
+      if (buf.length >= 6) {
+        const statusWord = buf.readUInt16BE(4);
+        driveFault = (statusWord & 0x0080) !== 0;
       }
 
       // Read Safety / Totmann (ns=7;i=697)
@@ -642,6 +649,20 @@ export async function runMotor1DegDiagnosticTest(
         (targetInc1Deg >> 16) & 0xFF,
         (targetInc1Deg >> 24) & 0xFF
       ]).toString("hex").toUpperCase();
+
+      // OPTIONAL: FORCE-ID SCHREIBEN (IO-Link Data Valid Flag oder ähnliches)
+      if (forceNodeId && forceNodeId.trim() !== '') {
+        try {
+          await session.write({
+            nodeId: forceNodeId.trim(),
+            attributeId: AttributeIds.Value,
+            value: { value: { dataType: DataType.Boolean, value: true } }
+          });
+          recommendations.push(`Force-Node ${forceNodeId} wurde erfolgreich mit 'true' (Boolean) beschrieben.`);
+        } catch (e: any) {
+          recommendations.push(`Achtung: Konnte Force-Node ${forceNodeId} nicht beschreiben: ${e.message}`);
+        }
+      }
 
       // Helper to execute and record a trial
       const executeTrial = async (
@@ -896,10 +917,9 @@ export async function runLedTestSuite(
   let session: any = null;
 
   const targetPortConfigs = [
-    { label: "X3", nodeId: "ns=7;i=643", desc: "Port X3 Output (Taster / Leuchte / DO)" },
-    { label: "X6", nodeId: "ns=7;i=646", desc: "Port X6 Output (ifm KT5112 Touch / RGB LED)" },
-    { label: "X5", nodeId: "ns=7;i=645", desc: "Port X5 Output (Trigger / Signal DO)" },
-    { label: "X2", nodeId: "ns=7;i=642", desc: "Port X2 Output (Reserve DO)" }
+    { label: "X3", nodeId: "ns=7;i=643", desc: "Port X3 Output (IO-Link Farbanzeige / RGB LED Blau, Grün, Rot, Gelb)" },
+    { label: "X6", nodeId: "ns=7;i=646", desc: "Port X6 Output (Digitaler Ausgang / DO Reserve)" },
+    { label: "X5", nodeId: "ns=7;i=645", desc: "Port X5 Output (Digitaler Ausgang / DO Reserve)" }
   ];
 
   try {

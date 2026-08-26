@@ -667,7 +667,8 @@ app.post("/api/diagnostics/motor-1deg-test", async (req, res) => {
       username: req.body.username || process.env.OPC_USERNAME || "admin",
       password: req.body.password || process.env.OPC_PASSWORD || "admin"
     };
-    const result = await runMotor1DegDiagnosticTest(target, creds);
+    const forceNodeId = req.body.forceNodeId;
+    const result = await runMotor1DegDiagnosticTest(target, creds, forceNodeId);
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: "1° Motor Bewegungstest fehlgeschlagen: " + err.message });
