@@ -187,6 +187,7 @@ let selected_program: TestProgramType = 'vortrimmer';
 let x3_mode: 'taster' | 'schalter' = 'taster';
 let x3_active = true; // Default ready or toggleable via X3 button/switch
 let x5_active = false; // Hold-to-run active state
+let x7_active = false; // Emergency Stop / Deadman active state
 
 let state = 0; // 0=IDLE, 1=PHASE1 (Anfahren), 2=PHASE2 (Pause), 3=PHASE3 (Prüfung), 4=PHASE4 (Nachlauf), 5=PHASE5 (Standstill), 10=HOMING, 20=PAUSED_X5
 let cur_nm = 0.0;
@@ -412,6 +413,7 @@ async function setupOpcUa() {
         if (deadmanVal?.value?.value) {
           const buf = deadmanVal.value.value;
           const isStop = Buffer.isBuffer(buf) ? (buf[0] & 0x01) === 0 : !Boolean(buf);
+          x7_active = isStop;
           if (isStop && (state > 0 && state < 10)) {
             executeEmergencyStop();
           }
@@ -863,6 +865,7 @@ app.get("/api/status", (req, res) => {
     x3Mode: x3_mode,
     x3Active: x3_active,
     x5Active: x5_active,
+    x7Active: x7_active,
     isReady: x3_active,
     settings
   });
@@ -1247,6 +1250,7 @@ async function startServer() {
       x3Mode: x3_mode,
       x3Active: x3_active,
       x5Active: x5_active,
+      x7Active: x7_active,
       isReady: x3_active,
       settings
     });
@@ -1293,6 +1297,7 @@ async function startServer() {
       x3Mode: x3_mode,
       x3Active: x3_active,
       x5Active: x5_active,
+      x7Active: x7_active,
       isReady: x3_active,
       gpio: gpioState,
       settings,

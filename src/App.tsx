@@ -66,6 +66,7 @@ interface TestBenchStatus {
   x3Mode?: 'taster' | 'schalter';
   x3Active?: boolean;
   x5Active?: boolean;
+  x7Active?: boolean;
   isReady?: boolean;
   settings: {
     start_nm: number;
@@ -113,6 +114,7 @@ export default function App() {
     x3Mode: 'taster',
     x3Active: true,
     x5Active: false,
+    x7Active: false,
     isReady: true,
     settings: {
       start_nm: 0.5,
@@ -650,72 +652,68 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* 2. BIG PRIMARY START & STOP HERO ROW */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 sm:gap-4 flex-1 items-stretch">
-                  
-                  {/* HAUPT-PRÜFTASTE: 1-Klick Start (Kein Halten nötig, fährt danach automatisch auf Home) */}
-                  <button
-                    onClick={() => sendCommand('start')}
-                    disabled={status.state !== 0 && status.state !== 20}
-                    className={`sm:col-span-2 p-6 sm:p-8 rounded-2xl border-2 transition-all cursor-pointer shadow-2xl flex flex-col justify-center items-center relative overflow-hidden active:scale-[0.99] min-h-[140px] sm:min-h-[170px] ${
-                      status.state === 1 || status.state === 3 || status.state === 4
-                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white border-emerald-300 ring-4 ring-emerald-500/30'
-                        : status.state === 10
-                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white border-blue-300 ring-4 ring-blue-500/30'
-                        : status.state === 0
-                        ? 'bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white border-emerald-400 shadow-emerald-950/50'
-                        : 'bg-slate-900 text-slate-500 border-slate-800 cursor-not-allowed'
-                    }`}
-                  >
-                    <div className="flex items-center gap-4">
-                      {status.state > 0 ? (
-                        <RotateCcw className="w-12 h-12 sm:w-14 sm:h-14 animate-spin text-white" />
-                      ) : (
-                        <Play className="w-12 h-12 sm:w-14 sm:h-14 fill-current text-white" />
-                      )}
-                      <div className="text-left">
-                        <div className="text-2xl sm:text-3xl font-black tracking-wide">
-                          {status.state === 1 || status.state === 3 || status.state === 4
-                            ? 'PRÜFUNG LÄUFT...'
-                            : status.state === 10
-                            ? 'AUTOMATISCHER RÜCKLAUF (0.0°)...'
-                            : 'PRÜFUNG STARTEN'}
-                        </div>
-                        <div className="text-xs sm:text-sm opacity-90 font-mono mt-0.5">
-                          {status.state > 0
-                            ? 'Prüfablauf aktiv • Motor fährt nach Abschluss selbstständig auf 0.0°'
-                            : '1x Drücken zum Starten • Automatischer Rücklauf nach der Prüfung'}
-                        </div>
+                {/* 2. HARDWARE EINGÄNGE STATUS (NON-INTERACTIVE) */}
+                <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 sm:p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <ShieldCheck className="w-4 h-4 text-slate-400" />
+                    <h3 className="text-xs sm:text-sm font-bold tracking-wider uppercase text-slate-300 font-mono">
+                      Hardware Eingänge (Status)
+                    </h3>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* STATUS X3: FREIGABE */}
+                    <div className={`p-3 sm:p-4 rounded-xl border-2 flex items-center gap-3 ${
+                      status.x3Active 
+                        ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-300' 
+                        : 'bg-slate-950/60 border-slate-800 text-slate-500'
+                    }`}>
+                      <div className={`p-2 rounded-lg ${status.x3Active ? 'bg-emerald-500/20' : 'bg-slate-900'}`}>
+                        {status.x3Active ? <Unlock className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-wide">X3 Freigabe</div>
+                        <div className="text-[10px] font-mono mt-0.5">{status.x3Active ? 'AKTIV' : 'GESPERRT'}</div>
                       </div>
                     </div>
-                  </button>
 
-                  {/* NOT-HALT */}
-                  <button
-                    onClick={() => sendCommand('stop')}
-                    className="p-6 sm:p-8 rounded-2xl bg-gradient-to-br from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 active:bg-red-800 text-white border-2 border-red-400 transition-all active:scale-[0.98] cursor-pointer shadow-xl shadow-red-950/40 flex flex-col items-center justify-center min-h-[120px]"
-                  >
-                    <Square className="w-10 h-10 sm:w-12 sm:h-12 mb-2 fill-current" />
-                    <span className="text-xl sm:text-2xl font-black tracking-wide">NOT-HALT</span>
-                    <span className="text-[11px] text-red-100 font-mono mt-0.5">Sofortiger Motor-Stopp</span>
-                  </button>
+                    {/* STATUS X5: PRÜFTASTE */}
+                    <div className={`p-3 sm:p-4 rounded-xl border-2 flex items-center gap-3 ${
+                      status.x5Active 
+                        ? 'bg-blue-950/40 border-blue-500/50 text-blue-300' 
+                        : 'bg-slate-950/60 border-slate-800 text-slate-500'
+                    }`}>
+                      <div className={`p-2 rounded-lg ${status.x5Active ? 'bg-blue-500/20' : 'bg-slate-900'}`}>
+                        <Hand className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-wide">X5 Prüftaste</div>
+                        <div className="text-[10px] font-mono mt-0.5">{status.x5Active ? 'GEDRÜCKT (HOLD)' : 'NICHT BETÄTIGT'}</div>
+                      </div>
+                    </div>
+
+                    {/* STATUS X7: NOT-HALT */}
+                    <div className={`p-3 sm:p-4 rounded-xl border-2 flex items-center gap-3 ${
+                      status.x7Active // Use x7Active instead of status.state === 99
+                        ? 'bg-red-950/40 border-red-500/50 text-red-300' 
+                        : 'bg-slate-950/60 border-slate-800 text-slate-500'
+                    }`}>
+                      <div className={`p-2 rounded-lg ${status.x7Active ? 'bg-red-500/20' : 'bg-slate-900'}`}>
+                        <AlertTriangle className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-wide">X7 Not-Halt</div>
+                        <div className="text-[10px] font-mono mt-0.5">{status.x7Active ? 'NOT-HALT AKTIV!' : 'OK (NICHT BETÄTIGT)'}</div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
-                {/* 3. SCHNELLE SETUP-LEISTE (X3 Freigabe, Jog, Tara, Reset) */}
+                {/* 3. SCHNELLE SETUP-LEISTE (Jog, Tara, Reset) */}
                 <div className="bg-slate-900/60 border border-slate-800 rounded-xl p-2.5 sm:p-3">
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {/* X3 BEREITSCHAFT */}
-                    <button
-                      onClick={() => handleToggleX3()}
-                      className={`p-2.5 sm:p-3 rounded-lg border flex items-center justify-center gap-2 font-bold text-xs sm:text-sm cursor-pointer transition ${
-                        status.x3Active
-                          ? 'bg-emerald-950/70 border-emerald-500 text-emerald-300'
-                          : 'bg-slate-950 border-amber-600/70 text-amber-300'
-                      }`}
-                    >
-                      {status.x3Active ? <Unlock className="w-4 h-4 text-emerald-400" /> : <Lock className="w-4 h-4 text-amber-400" />}
-                      <span>{status.x3Active ? 'X3 BEREIT (EIN)' : 'X3 SPERRE (AUS)'}</span>
-                    </button>
+                    {/* LEERFELD ALS PLATZHALTER STATT X3 BEREITSCHAFT */}
+                    <div className="hidden sm:block"></div>
 
                     {/* JOG LINKS */}
                     <button
