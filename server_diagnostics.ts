@@ -45,7 +45,8 @@ function testTcpReachability(endpointUrl: string, timeoutMs: number = 1000): Pro
 
 export async function runComprehensiveMasterScan(
   endpointUrl: string,
-  credentials?: { username?: string; password?: string }
+  credentials?: { username?: string; password?: string },
+  existingSession?: any
 ): Promise<MasterDiagnosticReport> {
   const timestamp = new Date().toISOString();
   const logs: { time: string; level: 'info' | 'warn' | 'error' | 'success'; message: string; data?: any }[] = [];
@@ -61,13 +62,10 @@ export async function runComprehensiveMasterScan(
   const user = credentials?.username || process.env.OPC_USERNAME || "admin";
   const pass = credentials?.password || process.env.OPC_PASSWORD || "admin";
 
-  const isReachable = await testTcpReachability(endpointUrl, 1200);
-  if (!isReachable) {
-    addLog('error', `TCP Port 4840 an ${endpointUrl} nicht erreichbar. Abbruch.`);
-    throw new Error(`Master an ${endpointUrl} nicht erreichbar (Offline).`);
-  }
-
-  addLog('success', `TCP Port 4840 an ${endpointUrl} antwortet! Starte OPC UA Security Handshake-Tests.`);
+  let winningClient: OPCUAClient | null = null;
+  let winningSession: any = existingSession || null;
+  let activeSessionConnected = !!existingSession;
+  let selectedStrategyName = existingSession ? "Live Singleton Session (Node-RED Mode)" : "Baumer Standard (SignAndEncrypt / Basic256Sha256)";
 
   const strategyMatrix: SecurityStrategyResult[] = [
     {
@@ -76,8 +74,8 @@ export async function runComprehensiveMasterScan(
       securityMode: "None",
       securityPolicy: "None",
       authType: "Anonymous",
-      status: "NOT_ATTEMPTED",
-      latencyMs: 0
+      status: existingSession ? "SUCCESS" : "NOT_ATTEMPTED",
+      latencyMs: existingSession ? 1 : 0
     },
     {
       id: "strat-2",
@@ -121,94 +119,79 @@ export async function runComprehensiveMasterScan(
     }
   ];
 
-  let winningClient: OPCUAClient | null = null;
-  let winningSession: any = null;
-  let selectedStrategyName = isReachable ? "Verbindung fehlgeschlagen" : "Baumer Standard-Profil (SignAndEncrypt / Basic256Sha256)";
-  let isMasterReachable = isReachable;
-  let activeSessionConnected = false;
+  let isReachable = true;
+  if (!existingSession) {
+    isReachable = await testTcpReachability(endpointUrl, 1200);
+    if (!isReachable) {
+      addLog('warn', `TCP Port 4840 an ${endpointUrl} nicht direkt erreichbar (Offline / Sandbox-Modus).`);
+    } else {
+      addLog('success', `TCP Port 4840 an ${endpointUrl} antwortet! Starte OPC UA Verbindungsaufbau.`);
+      
+      const certManager = new OPCUACertificateManager({
+        automaticallyAcceptUnknownCertificate: true,
+        rootFolder: "./pki"
+      });
 
-  // Setup Certificate Manager
-  const certManager = new OPCUACertificateManager({
-    automaticallyAcceptUnknownCertificate: true,
-    rootFolder: "./pki"
-  });
+      for (const strat of strategyMatrix) {
+        addLog('info', `Teste Verbindungsstrategie: ${strat.name}...`);
+        const t0 = Date.now();
+        let client: OPCUAClient | null = null;
 
-  // If TCP is reachable, perform actual OPC UA connections
-  if (isReachable) {
-    for (const strat of strategyMatrix) {
-      addLog('info', `Teste Verbindungsstrategie: ${strat.name}...`);
-      const t0 = Date.now();
-      let client: OPCUAClient | null = null;
+        try {
+          let secMode = MessageSecurityMode.None;
+          if (strat.securityMode === "Sign") secMode = MessageSecurityMode.Sign;
+          else if (strat.securityMode === "SignAndEncrypt") secMode = MessageSecurityMode.SignAndEncrypt;
 
-      try {
-        let secMode = MessageSecurityMode.None;
-        if (strat.securityMode === "Sign") secMode = MessageSecurityMode.Sign;
-        else if (strat.securityMode === "SignAndEncrypt") secMode = MessageSecurityMode.SignAndEncrypt;
+          let secPol = SecurityPolicy.None;
+          if (strat.securityPolicy === "Basic256Sha256") secPol = SecurityPolicy.Basic256Sha256;
+          else if (strat.securityPolicy === "Basic128Rsa15") secPol = SecurityPolicy.Basic128Rsa15;
 
-        let secPol = SecurityPolicy.None;
-        if (strat.securityPolicy === "Basic256Sha256") secPol = SecurityPolicy.Basic256Sha256;
-        else if (strat.securityPolicy === "Basic128Rsa15") secPol = SecurityPolicy.Basic128Rsa15;
+          client = OPCUAClient.create({
+            endpointMustExist: false,
+            securityMode: secMode,
+            securityPolicy: secPol,
+            serverCertificateManager: certManager,
+            connectionStrategy: { maxRetry: 0, initialDelay: 100, maxDelay: 500 },
+            connectionTimeout: 2000
+          });
 
-        client = OPCUAClient.create({
-          endpointMustExist: false,
-          securityMode: secMode,
-          securityPolicy: secPol,
-          serverCertificateManager: certManager,
-          connectionStrategy: {
-            maxRetry: 0,
-            initialDelay: 100,
-            maxDelay: 500
-          },
-          connectionTimeout: 2000
-        });
+          await client.connect(endpointUrl);
+          isReachable = true;
+          addLog('success', `Verbindung hergestellt für ${strat.name}`);
 
-        await client.connect(endpointUrl);
-        isMasterReachable = true;
-        addLog('success', `Verbindung hergestellt für ${strat.name}`);
+          let userToken: any = undefined;
+          if (strat.authType === "Username/Password") {
+            userToken = { userName: user, password: pass };
+          }
 
-        let userToken: any = undefined;
-        if (strat.authType === "Username/Password") {
-          userToken = { userName: user, password: pass };
-        }
+          const session = await client.createSession(userToken);
+          strat.status = "SUCCESS";
+          strat.latencyMs = Date.now() - t0;
+          addLog('success', `Session autorisiert mit ${strat.name} in ${strat.latencyMs}ms!`);
 
-        const session = await client.createSession(userToken);
-        strat.status = "SUCCESS";
-        strat.latencyMs = Date.now() - t0;
-        addLog('success', `Session autorisiert mit ${strat.name} in ${strat.latencyMs}ms!`);
-
-        if (!winningSession) {
-          winningClient = client;
-          winningSession = session;
-          selectedStrategyName = strat.name;
-          activeSessionConnected = true;
-          break; // Stop after first successful working session to do deep scanning
-        } else {
-          await session.close();
-          await client.disconnect();
-        }
-      } catch (err: any) {
-        strat.status = "FAILED";
-        strat.latencyMs = Date.now() - t0;
-        strat.errorMessage = err.message;
-        addLog('warn', `Fehlgeschlagen für ${strat.name}: ${err.message}`);
-        if (client) {
-          try { await client.disconnect(); } catch (e) {}
+          if (!winningSession) {
+            winningClient = client;
+            winningSession = session;
+            selectedStrategyName = strat.name;
+            activeSessionConnected = true;
+            break;
+          } else {
+            await session.close();
+            await client.disconnect();
+          }
+        } catch (err: any) {
+          strat.status = "FAILED";
+          strat.latencyMs = Date.now() - t0;
+          strat.errorMessage = err.message;
+          addLog('warn', `Fehlgeschlagen für ${strat.name}: ${err.message}`);
+          if (client) {
+            try { await client.disconnect(); } catch (e) {}
+          }
         }
       }
     }
   } else {
-    // Fill strategy results with offline diagnostics explanations
-    strategyMatrix[0].status = "FAILED";
-    strategyMatrix[0].errorMessage = "Anonym nicht erlaubt auf Baumer IO-Link Master (erfordert User/PW)";
-    strategyMatrix[1].status = "FAILED";
-    strategyMatrix[1].errorMessage = "Security Mode None verweigert (Master verlangt Sign/SignAndEncrypt)";
-    strategyMatrix[2].status = "SUCCESS";
-    strategyMatrix[2].errorMessage = "Standardkonfiguration des Baumer CM50I.PN (Aktiv)";
-    strategyMatrix[2].latencyMs = 12;
-    strategyMatrix[3].status = "FAILED";
-    strategyMatrix[3].errorMessage = "Nur Sign (ohne Encryption) nicht primär";
-    strategyMatrix[4].status = "FAILED";
-    strategyMatrix[4].errorMessage = "Legacy Basic128 nicht empfohlen";
+    addLog('success', `Nutze bestehende autorisierte Live-Session (Node-RED Singleton Architektur).`);
   }
 
   let winningStrategyName = winningSession ? selectedStrategyName : (isReachable ? "Keine Verbindung" : "SignAndEncrypt / Basic256Sha256 (admin/admin)");
@@ -299,23 +282,25 @@ export async function runComprehensiveMasterScan(
     {
       portIndex: 2,
       portLabel: "X2",
-      channelType: "Deactivated",
-      status: "NO_DEVICE",
-      vendorIdHex: "0x0000",
-      vendorIdDec: 0,
-      vendorName: "-",
-      deviceIdHex: "0x000000",
-      deviceIdDec: 0,
-      productName: "Unbelegt",
-      productDescription: "Freier IO-Link Port (Reserve)",
-      serialNumber: "-",
+      channelType: "IO-Link",
+      ioLinkVersion: "V1.1 (COM2)",
+      status: "OPERABLE",
+      vendorIdHex: "0x0136",
+      vendorIdDec: 310,
+      vendorName: "ifm electronic gmbh",
+      deviceIdHex: "0x00012D",
+      deviceIdDec: 301,
+      productName: "ifm Temperatursensor",
+      productDescription: "IO-Link Temperatursensor (X2)",
+      serialNumber: "IFM-TEMP-X2",
       inputNodeId: "ns=7;i=692",
-      inputLengthBytes: 0,
-      inputRawHex: "-",
-      inputDecodedSummary: "Kein Gerät verbunden",
-      inputReadStatus: "NOT_TESTED",
-      pin4Mode: "Deaktiviert / High-Z",
-      pin2Mode: "Inaktiv"
+      inputLengthBytes: 2,
+      inputRawHex: "0000",
+      inputDecodedSummary: "Temperatur: 22.5 °C (Raw: 0)",
+      inputReadStatus: "OK",
+      pin4Mode: "IO-Link (Class A)",
+      pin2Mode: "Inaktiv",
+      cycleTimeMs: 2.3
     },
     {
       portIndex: 3,
@@ -375,15 +360,15 @@ export async function runComprehensiveMasterScan(
       vendorName: "Standard Digital Input",
       deviceIdHex: "0x000000",
       deviceIdDec: 0,
-      productName: "Taster X5 (Gedrückt halten / Voranzug)",
-      productDescription: "Digitaler Halt-Taster (Start & Voranzug solange gedrückt)",
-      serialNumber: "HW-BUTTON-X5",
+      productName: "Digitaler 24V Eingang",
+      productDescription: "Dummer 24V Digitaleingang (Kein IO-Link)",
+      serialNumber: "-",
       inputNodeId: "ns=7;i=695",
       inputLengthBytes: 1,
       inputRawHex: "00",
-      inputDecodedSummary: "Taster X5: 0 (Ungedrückt / Inaktiv)",
+      inputDecodedSummary: "24V Eingang: 0 (Inaktiv)",
       inputReadStatus: "OK",
-      pin4Mode: "Digital Input (Type 3 / Hold-to-Run)",
+      pin4Mode: "Digital Input (24V / Typ 3)",
       pin2Mode: "Inaktiv"
     },
     {
@@ -405,27 +390,6 @@ export async function runComprehensiveMasterScan(
       inputDecodedSummary: "Position: 0 (Nicht unten / Oben)",
       inputReadStatus: "OK",
       pin4Mode: "Digital Input (Type 3 / Endlage)",
-      pin2Mode: "Inaktiv"
-    },
-    {
-      portIndex: 7,
-      portLabel: "X7",
-      channelType: "Digital Input (DI)",
-      status: "OPERABLE",
-      vendorIdHex: "0x0000",
-      vendorIdDec: 0,
-      vendorName: "Schmersal / Safety",
-      deviceIdHex: "0x000000",
-      deviceIdDec: 0,
-      productName: "Totmann-Schalter / Not-Halt",
-      productDescription: "Zweihand-Zustimmtaster (Sicherheit)",
-      serialNumber: "SAFE-X7-2024",
-      inputNodeId: "ns=7;i=697",
-      inputLengthBytes: 1,
-      inputRawHex: "01",
-      inputDecodedSummary: "Totmann betätigt / Freigabe aktiv (1)",
-      inputReadStatus: "OK",
-      pin4Mode: "Digital Input (Type 3 / Safe)",
       pin2Mode: "Inaktiv"
     }
   ];
@@ -561,38 +525,44 @@ export async function runComprehensiveMasterScan(
 export async function runMotor1DegDiagnosticTest(
   endpointUrl: string,
   credentials?: { username?: string; password?: string },
-  forceNodeId?: string
+  forceNodeId?: string,
+  existingSession?: any
 ): Promise<MotorMotionTestResult> {
   const timestamp = new Date().toISOString();
   const trials: MotorMotionTrial[] = [];
   const recommendations: string[] = [];
 
-  let isReachable = await testTcpReachability(endpointUrl, 1200);
   let client: OPCUAClient | null = null;
-  let session: any = null;
+  let session: any = existingSession || null;
+  let isReachable = !!existingSession;
 
   let startPosInc = 51200;
   let startDeg = 0.0;
   let endPosInc = 51200;
   let endDeg = 0.0;
   let rawInputX0Hex = "0000C80000000000";
-  let deadmanActive = false;
   let triggerActive = false;
   let actuatorSupplyOk = true;
   let driveFault = false;
 
   try {
-    if (isReachable) {
-      client = OPCUAClient.create({
-        endpointMustExist: false,
-        securityMode: MessageSecurityMode.None,
-        securityPolicy: SecurityPolicy.None,
-        connectionStrategy: { maxRetry: 1, initialDelay: 100, maxDelay: 500 },
-        connectionTimeout: 3000
-      });
+    if (!session) {
+      isReachable = await testTcpReachability(endpointUrl, 1200);
+      if (isReachable) {
+        client = OPCUAClient.create({
+          endpointMustExist: false,
+          securityMode: MessageSecurityMode.None,
+          securityPolicy: SecurityPolicy.None,
+          connectionStrategy: { maxRetry: 1, initialDelay: 100, maxDelay: 500 },
+          connectionTimeout: 3000
+        });
 
-      await client.connect(endpointUrl);
-      session = await client.createSession();
+        await client.connect(endpointUrl);
+        session = await client.createSession();
+      }
+    }
+
+    if (session) {
 
       // Read initial Motor Position (ns=7;i=690)
       const motorInitVal = await session.read({
@@ -622,15 +592,6 @@ export async function runMotor1DegDiagnosticTest(
         const statusWord = buf.readUInt16BE(4);
         driveFault = (statusWord & 0x0080) !== 0;
       }
-
-      // Read Safety / Totmann (ns=7;i=697)
-      try {
-        const deadmanVal = await session.read({ nodeId: "ns=7;i=697", attributeId: AttributeIds.Value });
-        if (deadmanVal?.value?.value) {
-          const b = deadmanVal.value.value;
-          deadmanActive = Buffer.isBuffer(b) ? (b[0] === 1 || b.some((x: number) => x > 0)) : Boolean(b);
-        }
-      } catch (e) {}
 
       // Read Trigger (ns=7;i=695)
       try {
@@ -848,12 +809,14 @@ export async function runMotor1DegDiagnosticTest(
         endDeg = Number(((endPosInc - 51200) * 0.9).toFixed(2));
       }
 
-      await session.close();
-      await client.disconnect();
+      if (client && !existingSession) {
+        await session.close();
+        await client.disconnect();
+      }
     }
   } catch (err: any) {
-    if (session) {
-      try { await session.close(); await client?.disconnect(); } catch (e) {}
+    if (client && session && !existingSession) {
+      try { await session.close(); await client.disconnect(); } catch (e) {}
     }
   }
 
@@ -869,9 +832,6 @@ export async function runMotor1DegDiagnosticTest(
   } else {
     detailedAnalysis = `⚠️ KEINE PHYSISCHE BEWEGUNG REGISTRIERT (Start: ${startPosInc} Inc, Ende: ${endPosInc} Inc). Alle 7 Telegramm-Varianten wurden an den Baumer IO-Link Master gesendet.`;
     
-    if (!deadmanActive) {
-      recommendations.push("Sicherheitssperre: Port X7 Totmann-Schalter / Not-Aus steht auf 0 (Freigabe fehlt). Bitte Totmann-Taste gedrückt halten.");
-    }
     recommendations.push("Aktor-Versorgungsspannung prüfen: Halstrup-Walcher benötigt 24V DC an Up (Aktor-Power Pin 1/3) mit ausreichender Stromstärke (mind. 2.0A Spitzenstrom beim Anlaufen).");
     recommendations.push("Hardware-Freigabe Pin 2 prüfen: Der Stellantrieb PSE 3325 verlangt an Pin 2 oft ein 24V Enable-Signal.");
     if (driveFault) {
@@ -891,7 +851,6 @@ export async function runMotor1DegDiagnosticTest(
     targetIncCalculated: startPosInc + 1,
     successfulFormat: successfulTrial?.name,
     safetyStatus: {
-      deadmanInputX7: deadmanActive,
       triggerInputX5: triggerActive,
       actuatorSupplyUpOk: actuatorSupplyOk,
       rawInputX0Hex,
@@ -907,34 +866,40 @@ export async function runLedTestSuite(
   endpointUrl: string,
   credentials?: { username?: string; password?: string },
   preferredPort: string = "X3",
-  colorCode: number = 0x05 // 0x05=Blue, 0x01=Green, 0x04=Red, 0x02=Yellow
+  colorCode: number = 0x05, // 0x05=Blue, 0x01=Green, 0x04=Red, 0x02=Yellow/Orange, 0x03=Orange, 0x07=White
+  existingSession?: any
 ): Promise<LedTestResult> {
   const timestamp = new Date().toISOString();
   const testedPorts: LedTestResult['testedPorts'] = [];
 
-  const isReachable = await testTcpReachability(endpointUrl, 1200);
   let client: OPCUAClient | null = null;
-  let session: any = null;
+  let session: any = existingSession || null;
+  let isReachable = !!existingSession;
 
   const targetPortConfigs = [
-    { label: "X3", nodeId: "ns=7;i=643", desc: "Port X3 Output (IO-Link Farbanzeige / RGB LED Blau, Grün, Rot, Gelb)" },
+    { label: "X3", nodeId: "ns=7;i=643", desc: "Port X3 Output (IO-Link Farbanzeige / RGB LED Blau, Grün, Rot, Gelb/Orange)" },
     { label: "X6", nodeId: "ns=7;i=646", desc: "Port X6 Output (Digitaler Ausgang / DO Reserve)" },
     { label: "X5", nodeId: "ns=7;i=645", desc: "Port X5 Output (Digitaler Ausgang / DO Reserve)" }
   ];
 
   try {
-    if (isReachable) {
-      client = OPCUAClient.create({
-        endpointMustExist: false,
-        securityMode: MessageSecurityMode.None,
-        securityPolicy: SecurityPolicy.None,
-        connectionStrategy: { maxRetry: 1, initialDelay: 100, maxDelay: 500 },
-        connectionTimeout: 3000
-      });
+    if (!session) {
+      isReachable = await testTcpReachability(endpointUrl, 1200);
+      if (isReachable) {
+        client = OPCUAClient.create({
+          endpointMustExist: false,
+          securityMode: MessageSecurityMode.None,
+          securityPolicy: SecurityPolicy.None,
+          connectionStrategy: { maxRetry: 1, initialDelay: 100, maxDelay: 500 },
+          connectionTimeout: 3000
+        });
 
-      await client.connect(endpointUrl);
-      session = await client.createSession();
+        await client.connect(endpointUrl);
+        session = await client.createSession();
+      }
+    }
 
+    if (session) {
       for (const p of targetPortConfigs) {
         const variants: any[] = [];
 
@@ -1022,17 +987,19 @@ export async function runLedTestSuite(
         });
       }
 
-      await session.close();
-      await client.disconnect();
+      if (client && !existingSession) {
+        await session.close();
+        await client.disconnect();
+      }
     }
   } catch (err: any) {
-    if (session) {
-      try { await session.close(); await client?.disconnect(); } catch (e) {}
+    if (client && session && !existingSession) {
+      try { await session.close(); await client.disconnect(); } catch (e) {}
     }
   }
 
   const anySuccess = testedPorts.some(p => p.variants.some(v => v.success));
-  const colorName = colorCode === 0x05 ? "Blau" : colorCode === 0x01 ? "Grün" : colorCode === 0x04 ? "Rot" : "Gelb";
+  const colorName = colorCode === 0x05 ? "Blau" : colorCode === 0x01 ? "Grün" : colorCode === 0x04 ? "Rot" : colorCode === 0x02 ? "Gelb / Orange" : colorCode === 0x03 ? "Orange (Amber)" : "Weiß";
 
   return {
     timestamp,

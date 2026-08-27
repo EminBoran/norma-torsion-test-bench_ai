@@ -83,7 +83,7 @@ export default function DeviceSettings({ initialSubTab = 'ablauf' }: DeviceSetti
         step6_homeSpeedRpm: 10.0,
         step6_requireDIX6: true,
         partNumber: 'NT-50-A2',
-        serialNumber: 'SN-' + Math.floor(1000 + Math.random() * 9000)
+        serialNumber: 'SN-2026-001'
       };
     } else if (type === 'fast') {
       preset = {
@@ -97,7 +97,7 @@ export default function DeviceSettings({ initialSubTab = 'ablauf' }: DeviceSetti
         step6_homeSpeedRpm: 15.0,
         step6_requireDIX6: false,
         partNumber: 'NT-50-FAST',
-        serialNumber: 'SN-F' + Math.floor(1000 + Math.random() * 9000)
+        serialNumber: 'SN-FAST-001'
       };
     } else if (type === 'heavy') {
       preset = {
@@ -111,7 +111,7 @@ export default function DeviceSettings({ initialSubTab = 'ablauf' }: DeviceSetti
         step6_homeSpeedRpm: 8.0,
         step6_requireDIX6: true,
         partNumber: 'NT-75-HD',
-        serialNumber: 'SN-H' + Math.floor(1000 + Math.random() * 9000)
+        serialNumber: 'SN-HD-001'
       };
     } else if (type === 'gentle') {
       preset = {
@@ -125,7 +125,7 @@ export default function DeviceSettings({ initialSubTab = 'ablauf' }: DeviceSetti
         step6_homeSpeedRpm: 5.0,
         step6_requireDIX6: true,
         partNumber: 'NT-30-FINE',
-        serialNumber: 'SN-G' + Math.floor(1000 + Math.random() * 9000)
+        serialNumber: 'SN-FINE-001'
       };
     }
     const updated = { ...editCfg, ...preset };

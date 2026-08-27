@@ -1,0 +1,189 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ============================================================================== -->
+<!--  PROFINET GSDML DRIVER FOR BAUMER CM50I.PN IO-LINK MASTER                     -->
+<!--  Norma Torsion Test Bench - CODESYS Soft-SPS Controller Edition               -->
+<!-- ============================================================================== -->
+<ISO15745Profile xmlns="http://www.profibus.com/GSDML/2014/04/DeviceProfile" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.profibus.com/GSDML/2014/04/DeviceProfile GSDML-Profile-V2.35.xsd">
+  <ProfileHeader>
+    <ProfileIdentification>PROFINET Device Profile</ProfileIdentification>
+    <ProfileRevision>1.00</ProfileRevision>
+    <ProfileName>Device Profile for PROFINET Devices</ProfileName>
+    <ProfileSource>Baumer Group</ProfileSource>
+    <ProfileClassID>Device</ProfileClassID>
+    <ISO15745Reference>
+      <ISO15745Part>4</ISO15745Part>
+      <ISO15745Edition>1</ISO15745Edition>
+      <ProfileTechnology>PROFINET</ProfileTechnology>
+    </ISO15745Reference>
+  </ProfileHeader>
+  <ProfileBody>
+    <DeviceIdentity VendorID="0x011E" DeviceID="0x0501">
+      <InfoText TextId="T_ID_DEV_INFO"/>
+      <VendorName Value="Baumer Group"/>
+    </DeviceIdentity>
+    <DeviceFunction>
+      <Family MainFamily="I/O" ProductFamily="Baumer IO-Link Master"/>
+    </DeviceFunction>
+    <ApplicationProcess>
+      <DeviceAccessPointList>
+        <DeviceAccessPointItem ID="DAP_CM50I_PN" PhysicalDevice="true" ModuleIdentNumber="0x00000001" MinDeviceInterval="32" ImplementationType="NP40" DNS_CompatibleName="baumer-cm50i-pn" FixedInSlots="0">
+          <ModuleInfo>
+            <Name TextId="T_ID_DAP_NAME"/>
+            <InfoText TextId="T_ID_DAP_INFO"/>
+            <VendorName Value="Baumer Group"/>
+            <OrderNumber Value="CM50I.PN-8P-IOL"/>
+            <HardwareRelease Value="HW 2.10"/>
+            <SoftwareRelease Value="FW 3.4.1"/>
+          </ModuleInfo>
+          <UseableModules>
+            <ModuleItemRef ModuleItemTarget="MOD_IOL_X0_HALSTRUP" AllowedInSlots="1"/>
+            <ModuleItemRef ModuleItemTarget="MOD_IOL_X1_HBM_T22" AllowedInSlots="2"/>
+            <ModuleItemRef ModuleItemTarget="MOD_IOL_X2_IFM_TEMP" AllowedInSlots="3"/>
+            <ModuleItemRef ModuleItemTarget="MOD_IOL_X3_IFM_RGB" AllowedInSlots="4"/>
+            <ModuleItemRef ModuleItemTarget="MOD_DI_X5_24V" AllowedInSlots="6"/>
+            <ModuleItemRef ModuleItemTarget="MOD_DI_X6_ENDLAGE" AllowedInSlots="7"/>
+          </UseableModules>
+        </DeviceAccessPointItem>
+      </DeviceAccessPointList>
+      <ModuleList>
+        <!-- Slot 1: Port X0 - Halstrup-Walcher PSE 3325 (6 Bytes In / 6 Bytes Out) -->
+        <ModuleItem ID="MOD_IOL_X0_HALSTRUP" ModuleIdentNumber="0x0000031E">
+          <ModuleInfo>
+            <Name TextId="T_ID_MOD_X0_NAME"/>
+            <InfoText TextId="T_ID_MOD_X0_INFO"/>
+          </ModuleInfo>
+          <VirtualSubmoduleList>
+            <VirtualSubmoduleItem ID="VSM_X0_HALSTRUP" SubmoduleIdentNumber="0x0001">
+              <IOData>
+                <Input>
+                  <DataItem DataType="OctetString" Length="6" TextId="T_ID_X0_IN"/>
+                </Input>
+                <Output>
+                  <DataItem DataType="OctetString" Length="6" TextId="T_ID_X0_OUT"/>
+                </Output>
+              </IOData>
+            </VirtualSubmoduleItem>
+          </VirtualSubmoduleList>
+        </ModuleItem>
+
+        <!-- Slot 2: Port X1 - HBM T22 Torque Sensor (2 Bytes In) -->
+        <ModuleItem ID="MOD_IOL_X1_HBM_T22" ModuleIdentNumber="0x0000011B">
+          <ModuleInfo>
+            <Name TextId="T_ID_MOD_X1_NAME"/>
+            <InfoText TextId="T_ID_MOD_X1_INFO"/>
+          </ModuleInfo>
+          <VirtualSubmoduleList>
+            <VirtualSubmoduleItem ID="VSM_X1_HBM" SubmoduleIdentNumber="0x0001">
+              <IOData>
+                <Input>
+                  <DataItem DataType="Integer16" TextId="T_ID_X1_IN"/>
+                </Input>
+              </IOData>
+            </VirtualSubmoduleItem>
+          </VirtualSubmoduleList>
+        </ModuleItem>
+
+        <!-- Slot 3: Port X2 - ifm Temperatursensor (2 Bytes In) -->
+        <ModuleItem ID="MOD_IOL_X2_IFM_TEMP" ModuleIdentNumber="0x00000136">
+          <ModuleInfo>
+            <Name TextId="T_ID_MOD_X2_NAME"/>
+            <InfoText TextId="T_ID_MOD_X2_INFO"/>
+          </ModuleInfo>
+          <VirtualSubmoduleList>
+            <VirtualSubmoduleItem ID="VSM_X2_TEMP" SubmoduleIdentNumber="0x0001">
+              <IOData>
+                <Input>
+                  <DataItem DataType="Integer16" TextId="T_ID_X2_IN"/>
+                </Input>
+              </IOData>
+            </VirtualSubmoduleItem>
+          </VirtualSubmoduleList>
+        </ModuleItem>
+
+        <!-- Slot 4: Port X3 - ifm RGB LED & Taster (1 Byte In / 1 Byte Out) -->
+        <ModuleItem ID="MOD_IOL_X3_IFM_RGB" ModuleIdentNumber="0x0000028A">
+          <ModuleInfo>
+            <Name TextId="T_ID_MOD_X3_NAME"/>
+            <InfoText TextId="T_ID_MOD_X3_INFO"/>
+          </ModuleInfo>
+          <VirtualSubmoduleList>
+            <VirtualSubmoduleItem ID="VSM_X3_RGB" SubmoduleIdentNumber="0x0001">
+              <IOData>
+                <Input>
+                  <DataItem DataType="Unsigned8" TextId="T_ID_X3_IN"/>
+                </Input>
+                <Output>
+                  <DataItem DataType="Unsigned8" TextId="T_ID_X3_OUT"/>
+                </Output>
+              </IOData>
+            </VirtualSubmoduleItem>
+          </VirtualSubmoduleList>
+        </ModuleItem>
+
+        <!-- Slot 6: Port X5 - Standard 24V Digitaler Eingang -->
+        <ModuleItem ID="MOD_DI_X5_24V" ModuleIdentNumber="0x00000005">
+          <ModuleInfo>
+            <Name TextId="T_ID_MOD_X5_NAME"/>
+            <InfoText TextId="T_ID_MOD_X5_INFO"/>
+          </ModuleInfo>
+          <VirtualSubmoduleList>
+            <VirtualSubmoduleItem ID="VSM_X5_DI" SubmoduleIdentNumber="0x0001">
+              <IOData>
+                <Input>
+                  <DataItem DataType="Unsigned8" TextId="T_ID_X5_IN"/>
+                </Input>
+              </IOData>
+            </VirtualSubmoduleItem>
+          </VirtualSubmoduleList>
+        </ModuleItem>
+
+        <!-- Slot 7: Port X6 - Positions-Endlagenschalter (Digital Input) -->
+        <ModuleItem ID="MOD_DI_X6_ENDLAGE" ModuleIdentNumber="0x00000006">
+          <ModuleInfo>
+            <Name TextId="T_ID_MOD_X6_NAME"/>
+            <InfoText TextId="T_ID_MOD_X6_INFO"/>
+          </ModuleInfo>
+          <VirtualSubmoduleList>
+            <VirtualSubmoduleItem ID="VSM_X6_DI" SubmoduleIdentNumber="0x0001">
+              <IOData>
+                <Input>
+                  <DataItem DataType="Unsigned8" TextId="T_ID_X6_IN"/>
+                </Input>
+              </IOData>
+            </VirtualSubmoduleItem>
+          </VirtualSubmoduleList>
+        </ModuleItem>
+      </ModuleList>
+      <GraphicsList>
+        <GraphicItem ID="GI_BAUMER_MASTER" GraphicFile="Baumer_CM50I_PN.bmp"/>
+      </GraphicsList>
+      <ExternalTextList>
+        <PrimaryLanguage>
+          <Text TextId="T_ID_DEV_INFO" Value="Baumer 8-Port IO-Link Master CM50I.PN mit PROFINET RT Schnittstelle"/>
+          <Text TextId="T_ID_DAP_NAME" Value="Baumer CM50I.PN PROFINET DAP"/>
+          <Text TextId="T_ID_DAP_INFO" Value="PROFINET IO Device Access Point"/>
+          <Text TextId="T_ID_MOD_X0_NAME" Value="Port X0: Halstrup-Walcher PSE 3325"/>
+          <Text TextId="T_ID_MOD_X0_INFO" Value="6 Bytes Input / 6 Bytes Output für Drehzahl &amp; Positionierung"/>
+          <Text TextId="T_ID_X0_IN" Value="Motor Status &amp; Istposition"/>
+          <Text TextId="T_ID_X0_OUT" Value="Motor Steuerwort &amp; Sollposition"/>
+          <Text TextId="T_ID_MOD_X1_NAME" Value="Port X1: HBM T22 Drehmomentsensor"/>
+          <Text TextId="T_ID_MOD_X1_INFO" Value="2 Bytes Input Drehmoment 16-Bit"/>
+          <Text TextId="T_ID_X1_IN" Value="Drehmoment Rohwert"/>
+          <Text TextId="T_ID_MOD_X2_NAME" Value="Port X2: ifm Temperatursensor"/>
+          <Text TextId="T_ID_MOD_X2_INFO" Value="2 Bytes Input Temperatur"/>
+          <Text TextId="T_ID_X2_IN" Value="Temperatur Rohwert"/>
+          <Text TextId="T_ID_MOD_X3_NAME" Value="Port X3: ifm RGB Farbanzeige"/>
+          <Text TextId="T_ID_MOD_X3_INFO" Value="1 Byte In (Taster) / 1 Byte Out (LED)"/>
+          <Text TextId="T_ID_X3_IN" Value="Taster Status"/>
+          <Text TextId="T_ID_X3_OUT" Value="LED Farbbefehl"/>
+          <Text TextId="T_ID_MOD_X5_NAME" Value="Port X5: 24V Digitaleingang"/>
+          <Text TextId="T_ID_MOD_X5_INFO" Value="1 Byte Digital Input"/>
+          <Text TextId="T_ID_X5_IN" Value="Trigger Eingang"/>
+          <Text TextId="T_ID_MOD_X6_NAME" Value="Port X6: Positions-Endlage"/>
+          <Text TextId="T_ID_MOD_X6_INFO" Value="1 Byte Digital Input"/>
+          <Text TextId="T_ID_X6_IN" Value="Endlagenkontakt"/>
+        </PrimaryLanguage>
+      </ExternalTextList>
+    </ApplicationProcess>
+  </ProfileBody>
+</ISO15745Profile>

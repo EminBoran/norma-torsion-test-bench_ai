@@ -45,15 +45,22 @@ fi
 cd "$INSTALL_DIR"
 
 echo ""
-echo "[4/7] Installiere NPM-Abhängigkeiten..."
+echo "[4/8] Optimiere Linux Realtime & PROFINET Schnittstelle (eth0)..."
+if [ -f "$INSTALL_DIR/setup_pi5_profinet_codesys.sh" ]; then
+    chmod +x "$INSTALL_DIR/setup_pi5_profinet_codesys.sh"
+    sudo "$INSTALL_DIR/setup_pi5_profinet_codesys.sh" || true
+fi
+
+echo ""
+echo "[5/8] Installiere NPM-Abhängigkeiten..."
 npm install
 
 echo ""
-echo "[5/7] Kompiliere Anwendung für Produktion..."
+echo "[6/8] Kompiliere Anwendung für Produktion..."
 npm run build
 
 echo ""
-echo "[6/7] Erstelle systemd Autostart-Dienst (Hintergrund-Service)..."
+echo "[7/8] Erstelle systemd Autostart-Dienst (Hintergrund-Service)..."
 SERVICE_FILE="/etc/systemd/system/norma-pruefstand.service"
 
 sudo bash -c "cat <<EOF > $SERVICE_FILE

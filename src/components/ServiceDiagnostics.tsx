@@ -250,6 +250,17 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
         </div>
       </div>
 
+      {/* PROFINET Soft-SPS Callout */}
+      <div className="bg-gradient-to-r from-blue-950/70 via-slate-900 to-indigo-950/70 border-b border-blue-800/40 px-4 py-2.5 flex items-center justify-between text-xs font-mono text-blue-200">
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+          <span><strong>Empfohlener Industriemodus:</strong> PROFINET Soft-SPS auf dem Raspberry Pi 5 läuft 100% offline und steuert Motor & Sensor im 4ms-Echtzeittakt.</span>
+        </div>
+        <span className="text-[11px] bg-blue-500/20 px-2 py-0.5 rounded text-blue-300 border border-blue-500/30">
+          Reiter "PROFINET Soft-SPS" oben aktivierbar
+        </span>
+      </div>
+
       {/* Target & Credentials Sub-Bar */}
       <div className="bg-slate-900/60 border-b border-slate-800/80 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
         <div className="flex items-center gap-4 flex-wrap">
@@ -457,26 +468,8 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
                 </div>
 
                 {/* Safety & Physical Checklist */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 font-mono text-xs">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 font-mono text-xs">
                   
-                  {/* Item 1: Totmann Switch X7 */}
-                  <div className={`p-3 rounded-xl border flex flex-col justify-between ${
-                    motor1DegResult.safetyStatus.deadmanInputX7
-                      ? 'bg-emerald-950/30 border-emerald-800/60 text-emerald-300'
-                      : 'bg-red-950/40 border-red-800/80 text-red-300'
-                  }`}>
-                    <div className="flex justify-between items-center text-[10px] text-slate-400 uppercase">
-                      <span>Port X7: Totmann / Not-Halt</span>
-                      {motor1DegResult.safetyStatus.deadmanInputX7 ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <XCircle className="w-3.5 h-3.5 text-red-400" />}
-                    </div>
-                    <div className="my-1.5 text-sm font-bold">
-                      {motor1DegResult.safetyStatus.deadmanInputX7 ? '✅ Freigabe aktiv (1)' : '❌ Gesperrt (0 / Not-Halt)'}
-                    </div>
-                    <div className="text-[10px] text-slate-400">
-                      {motor1DegResult.safetyStatus.deadmanInputX7 ? 'Sicherheitsschleife geschlossen' : 'Totmann-Taste gedrückt halten!'}
-                    </div>
-                  </div>
-
                   {/* Item 2: Trigger Port X5 */}
                   <div className="p-3 rounded-xl border bg-slate-900 border-slate-800 text-slate-300 flex flex-col justify-between">
                     <div className="flex justify-between items-center text-[10px] text-slate-400 uppercase">
@@ -620,28 +613,35 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
                       disabled={runningLedTest}
                       className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold font-mono cursor-pointer transition active:scale-98"
                     >
-                      🔵 Blau
+                      🔵 Blau (0x05)
                     </button>
                     <button
                       onClick={() => handleRunLedTest(0x01, "X3")}
                       disabled={runningLedTest}
                       className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold font-mono cursor-pointer transition active:scale-98"
                     >
-                      🟢 Grün
+                      🟢 Grün (0x01)
+                    </button>
+                    <button
+                      onClick={() => handleRunLedTest(0x02, "X3")}
+                      disabled={runningLedTest}
+                      className="px-3 py-1.5 bg-orange-600 hover:bg-orange-500 text-white rounded-lg text-xs font-bold font-mono cursor-pointer transition active:scale-98 shadow-md shadow-orange-950/50"
+                    >
+                      🟠 Orange (0x02)
+                    </button>
+                    <button
+                      onClick={() => handleRunLedTest(0x03, "X3")}
+                      disabled={runningLedTest}
+                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold font-mono cursor-pointer transition active:scale-98"
+                    >
+                      🟡 Amber (0x03)
                     </button>
                     <button
                       onClick={() => handleRunLedTest(0x04, "X3")}
                       disabled={runningLedTest}
                       className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-bold font-mono cursor-pointer transition active:scale-98"
                     >
-                      🔴 Rot
-                    </button>
-                    <button
-                      onClick={() => handleRunLedTest(0x02, "X3")}
-                      disabled={runningLedTest}
-                      className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold font-mono cursor-pointer transition active:scale-98"
-                    >
-                      🟡 Gelb
+                      🔴 Rot (0x04)
                     </button>
                     <button
                       onClick={() => handleRunLedTest(0x00, "X3")}
@@ -652,6 +652,10 @@ export default function ServiceDiagnostics({ onClose }: ServiceDiagnosticsProps)
                     </button>
                   </div>
                 </div>
+              </div>
+              <div className="text-[11px] text-emerald-400/90 font-mono bg-emerald-950/40 border border-emerald-800/60 p-2.5 rounded-lg flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span><strong>Zyklischer Keep-Alive Output aktiv:</strong> Die gewählte LED-Farbe an Port X3 (<code className="text-blue-300">ns=7;i=643</code>) wird vom Server kontinuierlich alle 50ms gehalten, damit der Baumer IO-Link Master kein Watchdog-Timeout auslöst.</span>
               </div>
 
               {/* LED Test Results Grid */}

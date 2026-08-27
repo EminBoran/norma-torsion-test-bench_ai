@@ -1,6 +1,6 @@
 {
   "name": "Norma Torsion Test Bench",
-  "description": "Industrielles Prüfstand-Dashboard für den Norma Torsion Test Bench (Baumer CC50 & OPC UA) mit X3 Main Start, X5 Trigger-Aufzeichnung, Motorpositions-Tracking, Messwertdatenbank und normgerechter Prüfberichterstellung.",
+  "description": "Industrielles Prüfstand-Dashboard für den Norma Torsion Test Bench mit CODESYS PROFINET Soft-SPS Controller auf Raspberry Pi 5, Baumer CM50I.PN IO-Link Master, Halstrup-Walcher Stellantrieb und HBM Drehmomentmesswelle mit 100% Offline-Betrieb.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

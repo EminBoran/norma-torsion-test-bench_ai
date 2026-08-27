@@ -145,7 +145,6 @@ export interface MotorMotionTestResult {
   targetIncCalculated: number;
   successfulFormat?: string;
   safetyStatus: {
-    deadmanInputX7: boolean;
     triggerInputX5: boolean;
     actuatorSupplyUpOk: boolean;
     rawInputX0Hex: string;
@@ -189,4 +188,74 @@ export interface MasterDiagnosticReport {
   lastLedTest?: LedTestResult;
   aiSummaryReport: string;
 }
+
+export interface ProfinetDeviceState {
+  stationName: string;
+  ipAddress: string;
+  macAddress: string;
+  vendorId: string;
+  deviceId: string;
+  status: "OK" | "BUS_FAULT" | "SYS_FAULT" | "OFFLINE" | "CONFIG_MISMATCH";
+  arState: "ESTABLISHED" | "CONNECTING" | "ABORTED" | "NO_CONNECTION";
+  cycleTimeMs: number;
+  jitterUs: number;
+  missedPackets: number;
+}
+
+export interface CodesysPlcStatus {
+  runtimeInstalled: boolean;
+  runtimeRunning: boolean;
+  plcState: "RUN" | "STOP" | "EXCEPTION" | "NOT_FOUND";
+  runtimeVersion: string;
+  uptimeSeconds: number;
+  cycleTimeAvgMs: number;
+  cycleTimeMaxMs: number;
+  cpuLoadPercent: number;
+  profinetStackRunning: boolean;
+  activeAlarmsCount: number;
+  lastDiagnosticCode?: string;
+  lastDiagnosticText?: string;
+}
+
+export interface ProfinetSlotMapping {
+  slot: number;
+  subslot: number;
+  portLabel: string;
+  moduleName: string;
+  configuredDevice: string;
+  inputBytes: number;
+  outputBytes: number;
+  inputAddressPlc: string;
+  outputAddressPlc: string;
+  inputHexLive: string;
+  outputHexLive: string;
+  status: "OK" | "IO_DATA_VALID" | "MODULE_FAULT" | "NOT_CONFIGURED";
+  description: string;
+}
+
+export interface ProfinetDiagnosticReport {
+  timestamp: string;
+  targetPiIp: string;
+  masterIp: string;
+  codesysStatus: CodesysPlcStatus;
+  profinetDevice: ProfinetDeviceState;
+  slots: ProfinetSlotMapping[];
+  systemChecks: {
+    checkName: string;
+    category: "NETWORK" | "RUNTIME" | "PROFINET" | "DEVICE_IO" | "SAFETY";
+    passed: boolean;
+    severity: "CRITICAL" | "WARNING" | "INFO";
+    message: string;
+    remedy?: string;
+  }[];
+  activeErrorCode?: string;
+  rootCauseAnalysis: string;
+  actionableSteps: string[];
+  offlineDriversAvailable: {
+    gsdmlFile: string;
+    codesysProjectSt: string;
+    setupScript: string;
+  };
+}
+
 

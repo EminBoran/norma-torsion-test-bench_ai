@@ -20,6 +20,13 @@ import { Server } from "socket.io";
 import * as dotenv from "dotenv";
 import { createRequire } from "module";
 import { runComprehensiveMasterScan, runMotor1DegDiagnosticTest, runLedTestSuite } from "./server_diagnostics";
+import { 
+  runProfinetDiagnosticScan, 
+  setSoftPlcState, 
+  GSDML_BAUMER_CM50I_PN_XML, 
+  CODESYS_STRUCTURED_TEXT_PLC_PRG, 
+  PI5_OFFLINE_SETUP_SCRIPT 
+} from "./server_profinet_codesys";
 
 dotenv.config();
 
@@ -108,8 +115,15 @@ const MOTOR_LEFT  = "001200000000"; // 5 bytes 0x00, byte 5: 0x12
 const LED_OFF    = 0x00;
 const LED_GREEN  = 0x01;
 const LED_YELLOW = 0x02;
+const LED_ORANGE = 0x02; // Gelb / Orange (Standard für ifm IO-Link Farbanzeige)
+const LED_AMBER  = 0x03; // Amber / Orange
 const LED_RED    = 0x04;
 const LED_BLUE   = 0x05;
+const LED_WHITE  = 0x07;
+
+// Active motor command and motion watchdog timer
+let active_motor_command: string | null = null;
+let motor_command_until: number = 0;
 
 interface TestBenchSettings {
   start_nm: number;
@@ -128,6 +142,8 @@ interface TestBenchSettings {
   torque_offset: number;
 }
 
+const SETTINGS_FILE = path.join(process.cwd(), 'data', 'settings.json');
+
 let settings: TestBenchSettings = {
   start_nm: 0.5,
   pause_ms: 1000,
@@ -139,16 +155,40 @@ let settings: TestBenchSettings = {
   home_pos: 51200,
   home_tol_inc: 2,
   homing_timeout_ms: 20000,
-  tester_name: "Pruefer",
-  article_id: "NORM-TORQUE-01",
-  serial_number: "SN-" + Math.floor(10000 + Math.random() * 90000),
+  tester_name: "Prüfer 1",
+  article_id: "NORMA-TORSION-01",
+  serial_number: "SN-2026-001",
   torque_offset: 0.0
 };
 
+// Load persistent settings from disk if available
+try {
+  const dataDir = path.join(process.cwd(), 'data');
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+  if (fs.existsSync(SETTINGS_FILE)) {
+    const saved = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    settings = { ...settings, ...saved };
+    console.log("Real persistent settings loaded from data/settings.json");
+  } else {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+  }
+} catch (e: any) {
+  console.warn("Could not load settings.json:", e.message);
+}
+
 // ----------------------------------------------------
-// State Machine Variables
+// State Machine Variables & Program Selection
 // ----------------------------------------------------
-let state = 0; // 0=IDLE, 1=PHASE1 (Anfahren), 2=PHASE2 (Pause), 3=PHASE3 (Prüfung), 4=PHASE4 (Nachlauf), 5=PHASE5 (Standstill), 10=HOMING
+export type TestProgramType = 'verdrehmoment' | 'vortrimmer' | 'dauerpruefung';
+
+let selected_program: TestProgramType = 'vortrimmer';
+let x3_mode: 'taster' | 'schalter' = 'taster';
+let x3_active = true; // Default ready or toggleable via X3 button/switch
+let x5_active = false; // Hold-to-run active state
+
+let state = 0; // 0=IDLE, 1=PHASE1 (Anfahren), 2=PHASE2 (Pause), 3=PHASE3 (Prüfung), 4=PHASE4 (Nachlauf), 5=PHASE5 (Standstill), 10=HOMING, 20=PAUSED_X5
 let cur_nm = 0.0;
 let peak_nm = 0.0;
 let cur_pos = 51200;
@@ -160,7 +200,7 @@ let t_dwell = 0;
 let standstill_start = 0;
 let homing_until = 0;
 let last_led_sent = LED_BLUE;
-let status_info = "Bereit (Idle)";
+let status_info = "Vor-Trimmerprüfung aktiv: Motor in Bereitschaft (X3 aktiv). X5 halten zum Prüfen";
 let total_test_count = 0;
 
 interface CurvePoint {
@@ -203,9 +243,11 @@ const NODE_MOTOR_OUT = "ns=7;i=640"; // Port X0 Output (Motor command)
 const NODE_MOTOR_IN  = "ns=7;i=690"; // Port X0 Input (Motor position feedback)
 const NODE_TORQUE_IN = "ns=7;i=691"; // Port X1 Input (HBM T22 Torque Sensor)
 const NODE_LED_X3_OUT= "ns=7;i=643"; // Port X3 Output (Taster / DO)
+const NODE_X3_IN     = "ns=7;i=693"; // Port X3 Input (Freigabeschalter)
+const NODE_X5_IN     = "ns=7;i=695"; // Port X5 Input (Physikalische Prüftaste Hold-to-Run)
 const NODE_LED_OUT   = "ns=7;i=646"; // Port X6 Output (IFM Button LED)
 const NODE_HOME_IN   = "ns=7;i=696"; // Port X6 Input (Home Button)
-const NODE_DEADMAN_IN= "ns=7;i=697"; // Port X7 Input (Totmann Switch)
+const NODE_DEADMAN_IN= "ns=7;i=697"; // Port X7 Input (Totmann Switch / Not-Aus)
 
 async function writeOpcNode(nodeId: string, buffer: Buffer): Promise<boolean> {
   if (!opcSession || !isConnected) return false;
@@ -244,12 +286,20 @@ async function writeOpcNode(nodeId: string, buffer: Buffer): Promise<boolean> {
   }
 }
 
-async function sendMotorCommand(hexCmd: string): Promise<boolean> {
+async function sendMotorCommand(hexCmd: string, durationMs: number = 0): Promise<boolean> {
   const rawBuf = Buffer.from(hexCmd, 'hex');
   const buf32 = Buffer.alloc(32);
   rawBuf.copy(buf32, 0);
 
-  console.log(`[MOTOR] Sende Hex: ${hexCmd} (32-Byte Buffer & unpadded) an ${NODE_MOTOR_OUT}`);
+  if (hexCmd === MOTOR_STOP) {
+    active_motor_command = null;
+    motor_command_until = 0;
+  } else {
+    active_motor_command = hexCmd;
+    motor_command_until = durationMs > 0 ? Date.now() + durationMs : Date.now() + 60000;
+  }
+
+  console.log(`[MOTOR] Sende Hex: ${hexCmd} (Aktiv: ${active_motor_command !== null}) an ${NODE_MOTOR_OUT}`);
   
   // Try 32-byte padded ByteString first
   let ok = await writeOpcNode(NODE_MOTOR_OUT, buf32);
@@ -266,7 +316,7 @@ async function sendLedCommand(ledColorByte: number): Promise<boolean> {
   const buf32 = Buffer.alloc(32);
   buf32[0] = ledColorByte;
 
-  // Send to both X3, X6 and X5
+  // Send to X3, X6 and X5
   const ledTargets = [NODE_LED_X3_OUT, NODE_LED_OUT, "ns=7;i=645"];
   for (const target of ledTargets) {
     try {
@@ -303,14 +353,20 @@ async function setupOpcUa() {
     opcSession = await opcClient.createSession();
     console.log("[OPC UA] ✅ OPC UA Session erfolgreich autorisiert!");
 
-    // Start fast polling loop (every 50ms) to ensure continuous live data stream
+    // Set initial LED to Blue
+    await sendLedCommand(LED_BLUE);
+
+    // Start fast polling & cyclic output loop (every 50ms, Node-RED style)
     setInterval(async () => {
       if (!opcSession || !isConnected) return;
       try {
-        // Read Motor Pos (ns=7;i=690) and Torque (ns=7;i=691) in parallel
-        const [motorVal, torqueVal] = await Promise.all([
+        // 1. Read Motor Pos, Torque, X3 (Freigabe), X5 (Prüftaste) and X7 (Not-Aus / Totmann)
+        const [motorVal, torqueVal, x3Val, x5Val, deadmanVal] = await Promise.all([
           opcSession.read({ nodeId: NODE_MOTOR_IN, attributeId: AttributeIds.Value }),
-          opcSession.read({ nodeId: NODE_TORQUE_IN, attributeId: AttributeIds.Value })
+          opcSession.read({ nodeId: NODE_TORQUE_IN, attributeId: AttributeIds.Value }),
+          opcSession.read({ nodeId: NODE_X3_IN, attributeId: AttributeIds.Value }).catch(() => null),
+          opcSession.read({ nodeId: NODE_X5_IN, attributeId: AttributeIds.Value }).catch(() => null),
+          opcSession.read({ nodeId: NODE_DEADMAN_IN, attributeId: AttributeIds.Value }).catch(() => null),
         ]);
 
         // Decode Motor Position (32 Byte Buffer from Baumer Master)
@@ -333,6 +389,68 @@ async function setupOpcUa() {
             cur_nm = Number(calculated.toFixed(3));
           }
         }
+
+        // Decode Physical Port X3 (Freigabeschalter)
+        if (x3Val?.value?.value) {
+          const buf = x3Val.value.value;
+          const isHigh = Buffer.isBuffer(buf) ? (buf[0] & 0x01) === 1 : Boolean(buf);
+          if (isHigh !== x3_active) {
+            executeSetX3(isHigh);
+          }
+        }
+
+        // Decode Physical Port X5 (Hold-to-Run Prüftaste)
+        if (x5Val?.value?.value) {
+          const buf = x5Val.value.value;
+          const isPressed = Buffer.isBuffer(buf) ? (buf[0] & 0x01) === 1 : Boolean(buf);
+          if (isPressed !== x5_active) {
+            executeSetX5(isPressed);
+          }
+        }
+
+        // Decode Port X7 (Hardware Not-Halt / Totmann)
+        if (deadmanVal?.value?.value) {
+          const buf = deadmanVal.value.value;
+          const isStop = Buffer.isBuffer(buf) ? (buf[0] & 0x01) === 0 : !Boolean(buf);
+          if (isStop && (state > 0 && state < 10)) {
+            executeEmergencyStop();
+          }
+        }
+
+        // 2. CYCLIC OUTPUT KEEP-ALIVE FOR LED (Port X3 / X6) - Prevents watchdog timeout
+        const ledBuf = Buffer.from([last_led_sent]);
+        try {
+          await opcSession.write({
+            nodeId: NODE_LED_X3_OUT,
+            attributeId: AttributeIds.Value,
+            value: { value: { dataType: DataType.ByteString, value: ledBuf } }
+          });
+        } catch (e) {}
+
+        // 3. CYCLIC OUTPUT FOR MOTOR IF ACTIVELY RUNNING
+        if (active_motor_command) {
+          if (motor_command_until > 0 && Date.now() > motor_command_until) {
+            active_motor_command = null;
+            motor_command_until = 0;
+            const stopBuf = Buffer.alloc(6);
+            try {
+              await opcSession.write({
+                nodeId: NODE_MOTOR_OUT,
+                attributeId: AttributeIds.Value,
+                value: { value: { dataType: DataType.ByteString, value: stopBuf } }
+              });
+            } catch (e) {}
+          } else {
+            const cmdBuf = Buffer.from(active_motor_command, 'hex');
+            try {
+              await opcSession.write({
+                nodeId: NODE_MOTOR_OUT,
+                attributeId: AttributeIds.Value,
+                value: { value: { dataType: DataType.ByteString, value: cmdBuf } }
+              });
+            } catch (e) {}
+          }
+        }
       } catch (err: any) {
         // Session might need reconnect if connection dropped
       }
@@ -352,6 +470,62 @@ async function setupOpcUa() {
 function tickStateMachine() {
   const now = Date.now();
   const start_tol_inc = Math.max(1, Math.round(settings.start_tolerance_deg / 0.9));
+
+  // Simulation engine when no OPC UA hardware is connected
+  if (!isConnected) {
+    // If running active test (states 1..4) without X5 active in simulation, pause
+    if ((state === 1 || state === 3 || state === 4) && !x5_active) {
+      state = 20;
+      status_info = "X5 Losgelassen: Motor gestoppt. Taste X5 gedrückt halten zum Prüfen.";
+    }
+
+    if (state === 1 && x5_active) {
+      cur_deg = Number((cur_deg + 0.6).toFixed(1));
+      cur_pos = settings.home_pos + Math.round(cur_deg / 0.9);
+      cur_nm = Number((cur_nm + 0.06).toFixed(3));
+    } else if (state === 3 && x5_active) {
+      cur_deg = Number((cur_deg + 1.2).toFixed(1));
+      cur_pos = settings.home_pos + Math.round(cur_deg / 0.9);
+      
+      if (selected_program === 'vortrimmer') {
+        // Vor-Trimmerprüfung: Sanfter Verlauf bis ~0.75 Nm
+        cur_nm = Number((0.45 + (cur_deg * 0.01) + (Math.sin(cur_deg * 0.2) * 0.05)).toFixed(3));
+        if (cur_deg >= 35.0) {
+          state = 5;
+          standstill_start = now;
+          status_info = `Vor-Trimmerprüfung erreicht! Reibmoment: ${cur_nm.toFixed(2)} Nm bei ${cur_deg.toFixed(1)}°`;
+        }
+      } else if (selected_program === 'dauerpruefung') {
+        cur_nm = Number((1.20 + (Math.sin(cur_deg * 0.1) * 0.08)).toFixed(3));
+        if (cur_deg >= 90.0) {
+          state = 5;
+          standstill_start = now;
+          status_info = `Dauerprüflauf beendet (${cur_deg.toFixed(1)}°, Moment: ${cur_nm.toFixed(2)} Nm)`;
+        }
+      } else {
+        // Verdrehmoment / Torsionsbruch
+        if (cur_deg < 42.0) {
+          cur_nm = Number((cur_nm + 0.14).toFixed(3));
+        } else {
+          // Drop nach Bruch
+          cur_nm = Number(Math.max(0.1, cur_nm * 0.82).toFixed(3));
+        }
+      }
+    } else if (state === 4 && x5_active) {
+      cur_deg = Number((cur_deg + 1.0).toFixed(1));
+      cur_pos = settings.home_pos + Math.round(cur_deg / 0.9);
+    } else if (state === 10) {
+      const diff = settings.home_pos - cur_pos;
+      if (Math.abs(diff) <= 250) {
+        cur_pos = settings.home_pos;
+        cur_deg = 0.0;
+        cur_nm = 0.0;
+      } else {
+        cur_pos += Math.sign(diff) * 250;
+        cur_deg = Number(((cur_pos - settings.home_pos) * 0.9).toFixed(1));
+      }
+    }
+  }
 
   // Update Peak Torque during active test
   if (state > 0 && state < 10) {
@@ -383,11 +557,13 @@ function tickStateMachine() {
     state = 3;
     sendMotorCommand(MOTOR_RIGHT);
     sendLedCommand(LED_RED);
-    status_info = "PHASE 3: Prüffahrt läuft";
+    const progLabel = selected_program === 'vortrimmer' ? 'Vor-Trimmerprüfung' : selected_program === 'dauerpruefung' ? 'Dauerprüfung' : 'Verdrehmoment-Prüfung';
+    status_info = `PHASE 3: ${progLabel} läuft (X5 aktiv)`;
   }
-  // State 3: Phase 3 (Bruch erkennen via Peak Drop)
+  // State 3: Phase 3 (Bruch erkennen via Peak Drop bei Verdrehmoment)
   else if (
     state === 3 &&
+    selected_program === 'verdrehmoment' &&
     peak_nm > 0.5 &&
     cur_nm <= (peak_nm * (1.0 - (settings.drop_val_pct / 100.0)))
   ) {
@@ -414,7 +590,8 @@ function tickStateMachine() {
   ) {
     state = 0;
     sendLedCommand(LED_BLUE);
-    status_info = `Prüfung erfolgreich abgeschlossen! Max: ${peak_nm.toFixed(2)} Nm`;
+    const progName = selected_program === 'vortrimmer' ? 'Vor-Trimmerprüfung' : selected_program === 'dauerpruefung' ? 'Dauerprüfung' : 'Verdrehmoment-Prüfung';
+    status_info = `${progName} erfolgreich abgeschlossen! Peak: ${peak_nm.toFixed(2)} Nm (Motor in Bereitschaft)`;
 
     // Save record to DB
     const recordId = "REC-" + Date.now();
@@ -423,7 +600,7 @@ function tickStateMachine() {
       db.run(
         `INSERT INTO test_records (id, timestamp, articleId, serialNumber, testerId, result, maxTorque, duration, torqueData, testParams)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
+         [
           recordId,
           new Date().toISOString(),
           settings.article_id,
@@ -433,10 +610,19 @@ function tickStateMachine() {
           peak_nm,
           duration,
           JSON.stringify(current_curve.filter((_, idx) => idx % 2 === 0)),
-          JSON.stringify(settings)
+          JSON.stringify({ ...settings, program: selected_program })
         ]
       ).catch((e: any) => console.error("DB Save error:", e));
     }
+
+    // AUTOMATIC HOMING: Move back to home position automatically without user action
+    state = 10;
+    x5_active = false;
+    homing_until = now + settings.homing_timeout_ms;
+    const posCmd = getPosHexCmd(settings.home_pos);
+    sendMotorCommand(posCmd);
+    sendLedCommand(LED_YELLOW);
+    status_info = `Prüfung abgeschlossen! Fährt automatisch zurück auf Home (0.0°)...`;
   }
   // State 10: Homing Sequence
   else if (state === 10) {
@@ -447,7 +633,7 @@ function tickStateMachine() {
       state = 0;
       sendMotorCommand(MOTOR_STOP);
       sendLedCommand(LED_BLUE);
-      status_info = "Home-Position (0.0°) erreicht.";
+      status_info = "Home-Position (0.0°) erreicht. Motor in Bereitschaft.";
     } else if (isTimeout) {
       state = 0;
       sendMotorCommand(MOTOR_STOP);
@@ -467,36 +653,132 @@ function tickStateMachine() {
 // ----------------------------------------------------
 // Action Handlers
 // ----------------------------------------------------
-function executeStartSequence() {
-  const now = Date.now();
-  const start_tol_inc = Math.max(1, Math.round(settings.start_tolerance_deg / 0.9));
+function executeSelectProgram(prog: TestProgramType) {
+  selected_program = prog;
+  const label = prog === 'vortrimmer' ? 'Vor-Trimmerprüfung' : prog === 'dauerpruefung' ? 'Dauerprüflauf' : 'Verdrehmoment-Prüfung';
+  if (x3_active) {
+    status_info = `Programm "${label}" aktiv. Motor in BEREITSCHAFT. X5 halten zum Prüfen.`;
+  } else {
+    status_info = `Programm "${label}" gewählt. Sperre aktiv: Bitte X3 einschalten für Bereitschaft.`;
+  }
+  return { success: true, program: selected_program, statusInfo: status_info, isReady: x3_active };
+}
 
-  // Check if at home
-  if (Math.abs(cur_pos - settings.home_pos) > start_tol_inc) {
-    sendLedCommand(LED_RED);
-    status_info = `Start blockiert: Motor nicht bei 0° (Ist: ${cur_deg.toFixed(1)}°). Bitte zuerst "Go Home" fahren!`;
-    return { success: false, message: status_info };
+function executeSetX3(active?: boolean, mode?: 'taster' | 'schalter') {
+  if (mode) {
+    x3_mode = mode;
+  }
+  if (typeof active === 'boolean') {
+    x3_active = active;
+  } else {
+    // Toggle
+    x3_active = !x3_active;
   }
 
-  state = 1;
-  peak_nm = 0.0;
-  break_pos = 0.0;
-  break_deg = null;
-  current_curve = [];
-  start_time = now;
-  t_dwell = 0;
-  standstill_start = 0;
-  total_test_count++;
+  const progLabel = selected_program === 'vortrimmer' ? 'Vor-Trimmerprüfung' : selected_program === 'dauerpruefung' ? 'Dauerprüfung' : 'Verdrehmoment-Prüfung';
 
-  sendMotorCommand(MOTOR_RIGHT);
-  sendLedCommand(LED_YELLOW);
-  status_info = `PHASE 1: Anfahren gestartet (Prüfung #${total_test_count})`;
+  if (x3_active) {
+    sendLedCommand(LED_YELLOW);
+    status_info = `X3 AKTIV (${x3_mode.toUpperCase()}): Motor in BEREITSCHAFT (${progLabel}). X5 halten zum Start.`;
+  } else {
+    if (state > 0 && state < 10) {
+      state = 0;
+      sendMotorCommand(MOTOR_STOP);
+    }
+    sendLedCommand(LED_BLUE);
+    status_info = `X3 AUS: Motor gesperrt (Freigabe über X3 erforderlich).`;
+  }
+
+  return { success: true, x3Active: x3_active, x3Mode: x3_mode, isReady: x3_active, statusInfo: status_info };
+}
+
+function executeStartSequence() {
+  const now = Date.now();
+  const progLabel = selected_program === 'vortrimmer' ? 'Vor-Trimmerprüfung' : selected_program === 'dauerpruefung' ? 'Dauerprüfung' : 'Verdrehmoment-Prüfung';
+
+  if (!x3_active) {
+    return { success: false, message: "Motor nicht in Bereitschaft! Bitte zuerst X3 Freigabe einschalten." };
+  }
+
+  // If in IDLE, start test
+  if (state === 0) {
+    state = 1;
+    peak_nm = 0.0;
+    break_pos = 0.0;
+    break_deg = null;
+    current_curve = [];
+    start_time = now;
+    t_dwell = 0;
+    standstill_start = 0;
+    total_test_count++;
+    x5_active = true;
+
+    sendMotorCommand(MOTOR_RIGHT);
+    sendLedCommand(LED_YELLOW);
+    status_info = `Prüfung gestartet: ${progLabel} läuft... (Fährt danach automatisch auf 0.0° Home)`;
+    return { success: true, message: status_info };
+  } else if (state === 20) {
+    state = 3;
+    x5_active = true;
+    sendMotorCommand(MOTOR_RIGHT);
+    sendLedCommand(LED_RED);
+    status_info = `${progLabel} wird fortgesetzt...`;
+    return { success: true, message: status_info };
+  }
 
   return { success: true, message: status_info };
 }
 
+function executeSetX5(pressed: boolean) {
+  x5_active = pressed;
+  const now = Date.now();
+  const progLabel = selected_program === 'vortrimmer' ? 'Vor-Trimmerprüfung' : selected_program === 'dauerpruefung' ? 'Dauerprüfung' : 'Verdrehmoment-Prüfung';
+
+  if (pressed) {
+    if (!x3_active) {
+      status_info = "Taste X5 gedrückt, aber Freigabe X3 ist AUS! Bitte Freigabeschalter X3 aktivieren.";
+      return { success: false, message: status_info, x5Active: true };
+    }
+
+    if (state === 0) {
+      state = 1;
+      peak_nm = 0.0;
+      break_pos = 0.0;
+      break_deg = null;
+      current_curve = [];
+      start_time = now;
+      t_dwell = 0;
+      standstill_start = 0;
+      total_test_count++;
+
+      sendMotorCommand(MOTOR_RIGHT);
+      sendLedCommand(LED_YELLOW);
+      status_info = `X5 GEDRÜCKT: ${progLabel} gestartet (Motor dreht)...`;
+      return { success: true, message: status_info, x5Active: true };
+    } else if (state === 20) {
+      state = 3;
+      sendMotorCommand(MOTOR_RIGHT);
+      sendLedCommand(LED_RED);
+      status_info = `X5 ERNEUT GEDRÜCKT: ${progLabel} wird fortgesetzt (Motor dreht)...`;
+      return { success: true, message: status_info, x5Active: true };
+    }
+  } else {
+    // X5 released -> Stop motor immediately during active test
+    if (state > 0 && state < 5) {
+      state = 20; // Paused due to deadman / X5 release
+      sendMotorCommand(MOTOR_STOP);
+      sendLedCommand(LED_YELLOW);
+      status_info = `X5 LOSGELASSEN: Motor gestoppt (Totmann). Zum Fortsetzen Taste X5 erneut gedrückt halten.`;
+      return { success: true, message: status_info, x5Active: false };
+    }
+  }
+
+  return { success: true, x5Active: x5_active, statusInfo: status_info };
+}
+
 function executeEmergencyStop() {
   state = 0;
+  x5_active = false;
   sendMotorCommand(MOTOR_STOP);
   sendLedCommand(LED_RED);
   status_info = "NOT-HALT ausgelöst! Motor gestoppt.";
@@ -504,11 +786,12 @@ function executeEmergencyStop() {
 }
 
 function executeGoHome() {
-  if (state !== 0) {
+  if (state !== 0 && state !== 20) {
     return { success: false, message: "Homing nur im Stillstand (Idle) möglich." };
   }
 
   state = 10;
+  x5_active = false;
   homing_until = Date.now() + settings.homing_timeout_ms;
   
   const posCmd = getPosHexCmd(settings.home_pos);
@@ -520,7 +803,7 @@ function executeGoHome() {
 }
 
 function executeJog(dir: 'left' | 'right' | 'stop') {
-  if (state !== 0 && state !== 10) {
+  if (state !== 0 && state !== 10 && state !== 20) {
     return { success: false, message: "Jog nur im Stillstand erlaubt." };
   }
 
@@ -539,6 +822,7 @@ function executeJog(dir: 'left' | 'right' | 'stop') {
 
 function executeReset() {
   state = 0;
+  x5_active = false;
   peak_nm = 0.0;
   break_pos = 0.0;
   break_deg = null;
@@ -548,7 +832,8 @@ function executeReset() {
   current_curve = [];
   sendMotorCommand(MOTOR_STOP);
   sendLedCommand(LED_BLUE);
-  status_info = "System zurückgesetzt. Bereit.";
+  const progLabel = selected_program === 'vortrimmer' ? 'Vor-Trimmerprüfung' : selected_program === 'dauerpruefung' ? 'Dauerprüfung' : 'Verdrehmoment-Prüfung';
+  status_info = `Reset ausgeführt. Programm "${progLabel}" in Bereitschaft (X3: ${x3_active ? 'AKTIV' : 'AUS'}).`;
   return { success: true, message: status_info };
 }
 
@@ -574,15 +859,58 @@ app.get("/api/status", (req, res) => {
     breakPosDeg: break_pos,
     ledColor: last_led_sent,
     totalTestCount: total_test_count,
+    selectedProgram: selected_program,
+    x3Mode: x3_mode,
+    x3Active: x3_active,
+    x5Active: x5_active,
+    isReady: x3_active,
     settings
   });
 });
 
+app.post("/api/program/select", (req, res) => {
+  const { program } = req.body;
+  if (program && (program === 'verdrehmoment' || program === 'vortrimmer' || program === 'dauerpruefung')) {
+    const result = executeSelectProgram(program);
+    return res.json(result);
+  }
+  res.status(400).json({ success: false, message: "Ungültiges Programm" });
+});
+
+app.post("/api/x3/set", (req, res) => {
+  const { active, mode } = req.body;
+  const result = executeSetX3(active, mode);
+  res.json(result);
+});
+
+app.post("/api/x3/toggle", (req, res) => {
+  const result = executeSetX3();
+  res.json(result);
+});
+
+app.post("/api/x5/state", (req, res) => {
+  const { pressed } = req.body;
+  const result = executeSetX5(Boolean(pressed));
+  res.json(result);
+});
+
 app.post("/api/control", async (req, res) => {
-  const { action, dir } = req.body;
+  const { action, dir, program, x3Active, x3Mode, x5Pressed } = req.body;
   let result: any = { success: false, message: "Unbekannte Aktion" };
 
   switch (action) {
+    case "select_program":
+      if (program) result = executeSelectProgram(program);
+      break;
+    case "set_x3":
+      result = executeSetX3(x3Active, x3Mode);
+      break;
+    case "toggle_x3":
+      result = executeSetX3();
+      break;
+    case "set_x5":
+      result = executeSetX5(Boolean(x5Pressed));
+      break;
     case "start":
       result = executeStartSequence();
       break;
@@ -617,6 +945,11 @@ app.get("/api/settings", (req, res) => {
 
 app.post("/api/settings", (req, res) => {
   settings = { ...settings, ...req.body };
+  try {
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf8');
+  } catch (e: any) {
+    console.warn("Error saving settings.json:", e.message);
+  }
   res.json({ success: true, settings });
 });
 
@@ -644,7 +977,7 @@ app.post("/api/diagnostics/scan", async (req, res) => {
       username: req.body.username || process.env.OPC_USERNAME || "admin",
       password: req.body.password || process.env.OPC_PASSWORD || "admin"
     };
-    const report = await runComprehensiveMasterScan(target, creds);
+    const report = await runComprehensiveMasterScan(target, creds, opcSession);
     res.json(report);
   } catch (err: any) {
     res.status(500).json({ error: "Diagnosescan fehlgeschlagen: " + err.message });
@@ -653,7 +986,7 @@ app.post("/api/diagnostics/scan", async (req, res) => {
 
 app.get("/api/diagnostics/scan", async (req, res) => {
   try {
-    const report = await runComprehensiveMasterScan(endpointUrl);
+    const report = await runComprehensiveMasterScan(endpointUrl, undefined, opcSession);
     res.json(report);
   } catch (err: any) {
     res.status(500).json({ error: "Diagnosescan fehlgeschlagen: " + err.message });
@@ -668,7 +1001,7 @@ app.post("/api/diagnostics/motor-1deg-test", async (req, res) => {
       password: req.body.password || process.env.OPC_PASSWORD || "admin"
     };
     const forceNodeId = req.body.forceNodeId;
-    const result = await runMotor1DegDiagnosticTest(target, creds, forceNodeId);
+    const result = await runMotor1DegDiagnosticTest(target, creds, forceNodeId, opcSession);
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: "1° Motor Bewegungstest fehlgeschlagen: " + err.message });
@@ -684,7 +1017,9 @@ app.post("/api/diagnostics/led-test", async (req, res) => {
     };
     const port = req.body.port || "X3";
     const colorCode = typeof req.body.color === "number" ? req.body.color : 0x05;
-    const result = await runLedTestSuite(target, creds, port, colorCode);
+    // Set persistent active color so cyclic loop keeps it on permanently
+    sendLedCommand(colorCode);
+    const result = await runLedTestSuite(target, creds, port, colorCode, opcSession);
     res.json(result);
   } catch (err: any) {
     res.status(500).json({ error: "LED / Taster-Test fehlgeschlagen: " + err.message });
@@ -796,6 +1131,55 @@ app.post("/api/diagnostics/custom-read", async (req, res) => {
   }
 });
 
+// ----------------------------------------------------
+// CODESYS PROFINET Soft-SPS Endpoints
+// ----------------------------------------------------
+app.get("/api/profinet/status", (req, res) => {
+  try {
+    const report = runProfinetDiagnosticScan(endpointUrl.replace("opc.tcp://", "").split(":")[0] || "10.191.199.182");
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: "Fehler beim Abrufen des PROFINET-Status: " + err.message });
+  }
+});
+
+app.post("/api/profinet/scan", (req, res) => {
+  try {
+    const targetIp = req.body.masterIp || endpointUrl.replace("opc.tcp://", "").split(":")[0] || "10.191.199.182";
+    const report = runProfinetDiagnosticScan(targetIp);
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: "PROFINET Diagnosescan fehlgeschlagen: " + err.message });
+  }
+});
+
+app.post("/api/profinet/plc-state", (req, res) => {
+  const { state } = req.body;
+  if (!state || !["RUN", "STOP", "EXCEPTION"].includes(state)) {
+    return res.status(400).json({ error: "Ungültiger Zustand. Erlaubt: RUN, STOP, EXCEPTION" });
+  }
+  const result = setSoftPlcState(state);
+  res.json(result);
+});
+
+app.get("/api/profinet/download/gsdml", (req, res) => {
+  res.setHeader("Content-Disposition", 'attachment; filename="GSDML-V2.35-Baumer-CM50I-PN-2024.xml"');
+  res.setHeader("Content-Type", "application/xml");
+  res.send(GSDML_BAUMER_CM50I_PN_XML);
+});
+
+app.get("/api/profinet/download/st", (req, res) => {
+  res.setHeader("Content-Disposition", 'attachment; filename="MAIN_PRG.st"');
+  res.setHeader("Content-Type", "text/plain");
+  res.send(CODESYS_STRUCTURED_TEXT_PLC_PRG);
+});
+
+app.get("/api/profinet/download/setup-script", (req, res) => {
+  res.setHeader("Content-Disposition", 'attachment; filename="setup_pi5_profinet_codesys.sh"');
+  res.setHeader("Content-Type", "application/x-sh");
+  res.send(PI5_OFFLINE_SETUP_SCRIPT);
+});
+
 app.post("/api/diagnostics/reconnect", async (req, res) => {
   const { endpoint, username, password } = req.body;
   if (username) process.env.OPC_USERNAME = username;
@@ -858,11 +1242,21 @@ async function startServer() {
       motorPositionDeg: cur_deg,
       motorPositionInc: cur_pos,
       breakPosDeg: break_pos,
+      ledColor: last_led_sent,
+      selectedProgram: selected_program,
+      x3Mode: x3_mode,
+      x3Active: x3_active,
+      x5Active: x5_active,
+      isReady: x3_active,
       settings
     });
 
     socket.on('execute_command', (data) => {
-      if (data.action === 'start') executeStartSequence();
+      if (data.action === 'select_program') executeSelectProgram(data.program);
+      else if (data.action === 'set_x3') executeSetX3(data.x3Active, data.x3Mode);
+      else if (data.action === 'toggle_x3') executeSetX3();
+      else if (data.action === 'set_x5') executeSetX5(Boolean(data.x5Pressed));
+      else if (data.action === 'start') executeStartSequence();
       else if (data.action === 'stop') executeEmergencyStop();
       else if (data.action === 'go_home') executeGoHome();
       else if (data.action === 'jog') executeJog(data.dir);
@@ -895,6 +1289,11 @@ async function startServer() {
       motorPositionInc: cur_pos,
       breakPosDeg: break_pos,
       ledColor: last_led_sent,
+      selectedProgram: selected_program,
+      x3Mode: x3_mode,
+      x3Active: x3_active,
+      x5Active: x5_active,
+      isReady: x3_active,
       gpio: gpioState,
       settings,
       liveCurve: current_curve.slice(-80)
